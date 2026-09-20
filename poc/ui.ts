@@ -1,19 +1,31 @@
 /**
- * A live view of the two-agent POC (port 5000).
+ * A live view of the prod-support scenario (port 5099).
  *
- * Shows both Agent Cards side by side, and streams the real trace events the
- * agents emit while they discover and call each other. Nothing here is
- * simulated: every row in the timeline is an event an agent actually reported.
+ * Shows every agent's card, the registry's current tag index, and streams
+ * the real trace events agents emit while discovering and calling each
+ * other. Nothing here is simulated: every row in the timeline is an event
+ * an agent actually reported.
  */
 import http from "node:http";
 import { UI_HTML } from "./ui-html.ts";
 
 const PORT = Number(process.env.UI_PORT ?? 5099);
-const ALICE = process.env.ALICE_URL ?? "http://localhost:5001";
-const BOB = process.env.BOB_URL ?? "http://localhost:5002";
+const REGISTRY_URL = process.env.REGISTRY_URL ?? "http://localhost:5010";
+const COMMANDER_URL = process.env.COMMANDER_URL ?? "http://localhost:5001";
+
+// Every agent the dashboard knows how to show a card for. The registry may
+// know about more (anything that registers itself), but this fixed list is
+// what the "Agents" panel renders -- the registry panel below it is what
+// shows what is *actually* registered right now.
+const AGENTS: { key: string; name: string; url: string }[] = [
+  { key: "commander", name: "prod-support", url: COMMANDER_URL },
+  { key: "splunk", name: "splunk", url: "http://localhost:5011" },
+  { key: "servicenow", name: "servicenow", url: "http://localhost:5012" },
+  { key: "jira", name: "jira", url: "http://localhost:5013" },
+  { key: "pagerduty", name: "pagerduty", url: "http://localhost:5014" },
+];
 
 type Event = { actor: string; kind: string; detail: string; at: number; [k: string]: unknown };
-
 const listeners = new Set<(e: Event) => void>();
 
 http.createServer(async (req, res) => {
@@ -29,7 +41,7 @@ http.createServer(async (req, res) => {
     return res.end(UI_HTML);
   }
 
-  // The agents POST their trace events here.
+  // Agents POST their trace events here.
   if (req.method === "POST" && url.pathname === "/trace") {
     let raw = "";
     for await (const c of req) raw += c;
@@ -49,29 +61,41 @@ http.createServer(async (req, res) => {
     return;
   }
 
-  // Both cards, fetched live from the agents themselves.
+  // Every known agent's card, fetched live. The x-poc-ui-poll header tells
+  // the agent this is dashboard housekeeping, not a protocol event -- see
+  // mini.ts's card-served handler for why that matters to the timeline.
   if (url.pathname === "/cards") {
-    const load = async (base: string) => {
+    const load = async (a: (typeof AGENTS)[number]) => {
       try {
-        const r = await fetch(`${base}/.well-known/agent-card.json`, {
+        const r = await fetch(`${a.url}/.well-known/agent-card.json`, {
           signal: AbortSignal.timeout(4000),
-          headers: { "x-poc-ui-poll": "1" }, // this is housekeeping, not a protocol event -- see mini.ts
+          headers: { "x-poc-ui-poll": "1" },
         });
-        return { ok: r.ok, base, card: r.ok ? await r.json() : null };
+        return { key: a.key, ok: r.ok, base: a.url, card: r.ok ? await r.json() : null };
       } catch (e) {
-        return { ok: false, base, card: null, error: e instanceof Error ? e.message : String(e) };
+        return { key: a.key, ok: false, base: a.url, card: null, error: e instanceof Error ? e.message : String(e) };
       }
     };
-    return json(200, { alice: await load(ALICE), bob: await load(BOB) });
+    return json(200, { agents: await Promise.all(AGENTS.map(load)) });
   }
 
-  // Ask alice a question; the trace arrives over /events as it happens.
+  // The registry's own tag index -- this answers "where is the registry".
+  if (url.pathname === "/registry") {
+    try {
+      const r = await fetch(`${REGISTRY_URL}/index`, { signal: AbortSignal.timeout(4000) });
+      return json(200, { ok: r.ok, url: REGISTRY_URL, ...(await r.json()) });
+    } catch (e) {
+      return json(200, { ok: false, url: REGISTRY_URL, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // Ask the commander a question; the trace arrives over /events as it happens.
   if (req.method === "POST" && url.pathname === "/ask") {
     let raw = "";
     for await (const c of req) raw += c;
     const { text } = JSON.parse(raw || "{}");
     try {
-      const r = await fetch(ALICE, {
+      const r = await fetch(COMMANDER_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -91,5 +115,5 @@ http.createServer(async (req, res) => {
   json(404, { error: "not found" });
 }).listen(PORT, () => {
   console.log(`[ui] open http://localhost:${PORT}`);
-  console.log(`[ui] watching alice=${ALICE} bob=${BOB}`);
+  console.log(`[ui] commander=${COMMANDER_URL} registry=${REGISTRY_URL}`);
 });

@@ -1,6 +1,7 @@
 /**
- * A2A in ~90 lines: enough to serve an Agent Card, answer JSON-RPC calls,
- * and call another agent. Shared by alice.ts and bob.ts.
+ * A2A in ~150 lines: enough to serve an Agent Card, answer JSON-RPC calls,
+ * find a peer through a registry, and call it. Shared by every agent in
+ * poc/, including poc/registry.ts itself.
  *
  * The full version lives in ../ts/a2a/. This one drops streaming, task
  * storage, cancellation and error codes so the shape stays visible.
@@ -46,13 +47,15 @@ export function trace(actor: string, kind: string, detail: string, extra: Record
   );
 }
 
-/** Start an agent: publish a card, answer `message/send`. */
+/** Start an agent: publish a card, answer `message/send`. Returns the card and a `ready` promise. */
 export function serve(opts: {
   name: string; description: string; port: number;
   skills: Skill[];
   handle: (text: string, skillId: string) => Promise<string> | string;
-}) {
+}): { card: Card; ready: Promise<void> } {
   const url = `http://localhost:${opts.port}`;
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((r) => (resolveReady = r));
   const card: Card = {
     protocolVersion: "0.3.0",
     name: opts.name,
@@ -112,7 +115,9 @@ export function serve(opts: {
   }).listen(opts.port, () => {
     console.log(`[${opts.name}] listening on ${url}`);
     console.log(`[${opts.name}] card at ${url}/.well-known/agent-card.json`);
+    resolveReady();
   });
+  return { card, ready };
 }
 
 /** Read another agent's card. This is discovery: no registry, no config. */
@@ -142,4 +147,56 @@ export async function call(card: Card, text: string, skillId: string, who = "?")
   return (body.result.artifacts ?? [])
     .flatMap((a: any) => a.parts).filter((p: any) => p.kind === "text")
     .map((p: any) => p.text).join("\n");
+}
+
+/**
+ * ------------------------------------------------------------------------
+ * Registry client -- the piece the two-agent alice/bob demo deliberately
+ * left out. With two agents, hardcoding a peer's URL is fine. The moment
+ * you have several specialists, the useful question stops being "where is
+ * Bob" and becomes "who can do X" -- and answering *that* is what a
+ * registry is for. See poc/registry.ts for the ~70-line server this talks to.
+ * ------------------------------------------------------------------------
+ */
+
+export type RegistryHit = { card: Card; matchedSkill: string };
+
+/**
+ * Tell the registry we exist. Called once, on boot, by every specialist.
+ * `baseUrl` is the agent's own base URL (the same one its card's `url`
+ * field carries) -- the registry fetches the card itself from there.
+ */
+export async function registerWithRegistry(registryUrl: string, baseUrl: string, who: string): Promise<void> {
+  trace(who, "registering", `POST ${registryUrl}/register  { cardUrl: "${baseUrl}" }`);
+  try {
+    await fetch(`${registryUrl}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cardUrl: baseUrl }),
+    });
+  } catch (err) {
+    console.error(`[${who}] could not reach the registry at ${registryUrl}:`, err);
+  }
+}
+
+/**
+ * Ask the registry who offers a capability, by tag. This is the call that
+ * answers "discover the Splunk agent" -- the caller names a capability
+ * ("logs"), never an address, and the registry is the only thing that knows
+ * where every specialist actually lives.
+ */
+export async function findByTag(registryUrl: string, tag: string, who: string): Promise<RegistryHit | null> {
+  trace(who, "querying-registry", `GET ${registryUrl}/agents?tag=${tag}`, { tag });
+  const res = await fetch(`${registryUrl}/agents?tag=${encodeURIComponent(tag)}`);
+  const body = (await res.json()) as { results: RegistryHit[] };
+  const hits = body.results ?? [];
+  if (hits.length === 0) {
+    trace(who, "no-agent-found", `the registry has no agent tagged "${tag}"`, { tag });
+    return null;
+  }
+  const hit = hits[0];
+  trace(who, "registry-hit", `registry says "${hit.card.name}" offers "${tag}" (skill: ${hit.matchedSkill})`, {
+    tag, agent: hit.card.name, skillId: hit.matchedSkill,
+  });
+  return hit;
 }

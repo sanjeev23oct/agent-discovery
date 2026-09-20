@@ -10,25 +10,39 @@ Five agents, in **two languages**, coordinating over the wire. Nothing is hardco
 
 **Zero dependencies.** No `npm install`, no `pip install`, no API keys, no network access. Node ≥ 22.6 (for native TypeScript) and Python 3 are all you need.
 
-## Start here: two agents talking
+## Start here: a prod-support scenario
 
-If you want the idea in one sitting, skip the swarm and read [poc/](poc/) — two agents, two ports, ~170 lines total, no dependencies:
+If you want the idea in one sitting, skip the full swarm and try [poc/](poc/) —
+a **prod-support agent** that investigates a reported issue by *discovering*
+whatever specialists are registered: Splunk for logs, ServiceNow for
+incidents, Jira for tickets, PagerDuty for on-call escalation. Every
+specialist is mocked (no real Splunk/ServiceNow/Jira/PagerDuty involved) --
+what's real is the protocol and the registry.
 
 ```bash
-./poc/run.sh
+./poc/run-ui.sh
 ```
 
+Opens a live dashboard: every agent's card, **the registry's own tag index**
+(this is the "where's the registry" answer — it's its own panel), and a
+real-time trace as the commander discovers and calls each specialist:
+
 ```
-[alice] I can't do maths. Looking for a peer at http://localhost:5002...
-[alice] found "bob" -- Evaluates arithmetic expressions.
-[alice] its skills: math.evaluate [math, calculate, arithmetic]
-[alice] "math.evaluate" is tagged "math" -- delegating
-answer: I asked bob (math.evaluate) and it said: 12 * 34 + 7 = 415
+prod-support  QUERYING-REGISTRY  GET http://localhost:5010/agents?tag=logs
+prod-support  REGISTRY-HIT       registry says "splunk (mock)" offers "logs"
+prod-support  CALLING            POST http://localhost:5011 -> message/send
+splunk (mock) ANSWERED           critical :: 247 ERROR events in the last 15 minutes...
+prod-support  QUERYING-REGISTRY  GET http://localhost:5010/agents?tag=incident
+...
 ```
 
-Alice is told one thing about Bob: a URL. His name, description and skills she reads from his card at runtime, and she matches on the **tag** `math`, never on his skill's name. Swap in `carol.ts`, whose skill is called `arithmetic.compute` instead, and Alice works with her unchanged.
+The commander never mentions Splunk, ServiceNow, Jira or PagerDuty by name —
+only capability tags (`logs`, `incident`, `bug-tracker`, `oncall`), resolved
+against the registry at the moment they're needed. Register a fifth
+specialist and it becomes usable with **zero changes** to the commander —
+[poc/README.md](poc/README.md#the-and-so-on-part) proves this by doing it live.
 
-Want to *see* it instead of reading logs? `./poc/run-ui.sh` opens a dashboard with both Agent Cards fetched live, and a real-time trace of discovery and delegation as they happen — nothing simulated, the agents report what they're already doing. See [poc/README.md](poc/README.md).
+Prefer the CLI? `./poc/run.sh` runs the same scenario without the dashboard.
 
 ## Quick start
 

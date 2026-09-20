@@ -153,6 +153,7 @@ Getting there took four client fixes, each found by a live failure — bare `Mes
 | [04-swarm-patterns.md](docs/04-swarm-patterns.md) | Orchestrator vs. handoff vs. fan-out vs. blackboard |
 | [05-going-public.md](docs/05-going-public.md) | Exposing your agent safely to the outside world |
 | [06-does-this-pay-off.md](docs/06-does-this-pay-off.md) | **Honest assessment** — what 318 live public agents actually sell, and when a swarm is the wrong answer |
+| [07-a2a-vs-mcp.md](docs/07-a2a-vs-mcp.md) | A2A vs MCP, sourced against both specs — they're not competitors, and (as of Aug 2026) they share a governance home |
 
 ## Reading the code
 

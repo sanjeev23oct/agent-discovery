@@ -1,6 +1,6 @@
 # 2. The A2A protocol
 
-A2A (Agent2Agent) is an open protocol for agents to call other agents. It was published by Google in 2025 and is now governed by the Linux Foundation.
+A2A (Agent2Agent) is an open protocol for agents to call other agents. Google published it in 2025 under the Linux Foundation; on 2026-08-20 it moved to the [Agentic AI Foundation](https://aaif.io) (AAIF) — a Linux Foundation-directed body — where it now sits alongside Anthropic's MCP under the same neutral governance. See [docs/07-a2a-vs-mcp.md](07-a2a-vs-mcp.md) for how the two protocols relate.
 
 Its bet is narrow and sensible: **agents are opaque to each other.** You do not get to see another agent's prompts, tools, memory or model. You see a capability description, and you exchange messages about tasks. Everything else is private.
 

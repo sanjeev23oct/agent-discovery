@@ -110,6 +110,8 @@ one process made it real.
 ./poc/run-ui.sh
 ```
 
+![All five agent cards, splunk (mock) expanded to show its raw Agent Card JSON, and the registry's tag index below](../docs/images/dashboard-cards.png)
+
 Opens `http://localhost:5099` with three real, live views:
 
 - **Every agent's card**, fetched from its own `/.well-known/agent-card.json` --

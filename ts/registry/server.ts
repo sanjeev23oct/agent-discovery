@@ -12,22 +12,61 @@
 import http from "node:http";
 import type { ServerResponse } from "node:http";
 import { fetchAgentCard } from "../a2a/client.ts";
+import { DASHBOARD_HTML } from "./dashboard.ts";
 import type { AgentCard } from "../a2a/types.ts";
 
 const PORT = Number(process.env.REGISTRY_PORT ?? 4000);
 const HEALTH_INTERVAL_MS = 10_000;
 
-type Entry = { cardUrl: string; card: AgentCard; lastSeen: string; online: boolean };
+/**
+ * `source` separates our own swarm from agents scanned off the public internet.
+ * It drives both the dashboard and the health checker: we re-poll our own
+ * agents every few seconds, but re-polling hundreds of other people's servers
+ * on a timer would be rude, so public entries are only checked when scanned.
+ */
+type Source = "local" | "public";
+type Entry = { cardUrl: string; card: AgentCard; lastSeen: string; online: boolean; source: Source };
 
 const agents = new Map<string, Entry>();
 const log = (...args: unknown[]) => console.log("[registry]", ...args);
 
 /** Re-fetch a card. This doubles as a liveness check -- a card you cannot fetch is an agent you cannot call. */
-async function refresh(cardUrl: string): Promise<Entry> {
+/**
+ * Coerce a card fetched from a stranger into a shape the rest of this service
+ * can rely on.
+ *
+ * The spec marks `skills`, `tags` and `description` as required. Real public
+ * agents omit them anyway -- roughly 1 in 60 of the agents scanned off the
+ * public internet has no `skills` array at all. Trusting "required" on data
+ * from other people's servers took this registry down with a TypeError, so
+ * every card is normalised here, once, on the way in.
+ */
+function normaliseCard(raw: any, cardUrl: string): AgentCard {
+  const skills = Array.isArray(raw?.skills) ? raw.skills : [];
+  return {
+    ...raw,
+    name: typeof raw?.name === "string" && raw.name.trim() ? raw.name : new URL(cardUrl).host,
+    description: typeof raw?.description === "string" ? raw.description : "",
+    url: typeof raw?.url === "string" && raw.url ? raw.url : new URL(cardUrl).origin,
+    protocolVersion: typeof raw?.protocolVersion === "string" ? raw.protocolVersion : "unknown",
+    capabilities: typeof raw?.capabilities === "object" && raw.capabilities ? raw.capabilities : {},
+    skills: skills.map((s: any, i: number) => ({
+      ...s,
+      id: typeof s?.id === "string" && s.id ? s.id : `skill-${i}`,
+      name: typeof s?.name === "string" ? s.name : "",
+      description: typeof s?.description === "string" ? s.description : "",
+      tags: Array.isArray(s?.tags) ? s.tags.filter((t: unknown) => typeof t === "string") : [],
+    })),
+  } as AgentCard;
+}
+
+async function refresh(cardUrl: string, source: Source = "local", prefetched?: AgentCard): Promise<Entry> {
   try {
-    const card = await fetchAgentCard(cardUrl);
-    const entry: Entry = { cardUrl, card, lastSeen: new Date().toISOString(), online: true };
-    agents.set(card.name, entry);
+    const card = normaliseCard(prefetched ?? (await fetchAgentCard(cardUrl)), cardUrl);
+    const entry: Entry = { cardUrl, card, lastSeen: new Date().toISOString(), online: true, source };
+    // Public agents collide on common names ("Agent", "assistant"), so key
+    // public entries by their URL and keep local names clean.
+    agents.set(source === "public" ? `${card.name} @ ${new URL(cardUrl).host}` : card.name, entry);
     return entry;
   } catch (err) {
     const existing = [...agents.values()].find((e) => e.cardUrl === cardUrl);
@@ -41,7 +80,8 @@ async function refresh(cardUrl: string): Promise<Entry> {
 
 setInterval(() => {
   for (const entry of agents.values()) {
-    refresh(entry.cardUrl).catch(() => {});
+    if (entry.source !== "local") continue; // don't poll other people's servers on a timer
+    refresh(entry.cardUrl, "local").catch(() => {});
   }
 }, HEALTH_INTERVAL_MS).unref?.();
 
@@ -56,10 +96,12 @@ function search(params: URLSearchParams) {
   const q = params.get("q")?.toLowerCase();
   const includeOffline = params.get("includeOffline") === "true";
 
-  const results: Array<{ agent: AgentCard; matchedSkills: string[]; cardUrl: string; online: boolean }> = [];
-  for (const entry of agents.values()) {
+  const source = params.get("source");
+  const results: Array<{ agent: AgentCard; matchedSkills: string[]; cardUrl: string; online: boolean; source: Source; name: string }> = [];
+  for (const [name, entry] of agents.entries()) {
     if (!entry.online && !includeOffline) continue;
-    const matched = entry.card.skills.filter((s) => {
+    if (source && entry.source !== source) continue;
+    const matched = (entry.card.skills ?? []).filter((s) => {
       if (skill && s.id.toLowerCase() !== skill) return false;
       if (tag && !s.tags.some((t) => t.toLowerCase() === tag)) return false;
       if (q) {
@@ -74,6 +116,8 @@ function search(params: URLSearchParams) {
       matchedSkills: matched.map((s) => s.id),
       cardUrl: entry.cardUrl,
       online: entry.online,
+      source: entry.source,
+      name,
     });
   }
   return results;
@@ -90,6 +134,17 @@ function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 const server = http.createServer(async (req, res) => {
+  try {
+    await handle(req, res);
+  } catch (err) {
+    // One bad card or one bad query must never take the registry down with it.
+    log("request failed:", err instanceof Error ? err.stack : err);
+    if (!res.headersSent) json(res, 500, { error: "internal error" });
+    else res.end();
+  }
+});
+
+async function handle(req: http.IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
 
   if (req.method === "OPTIONS") {
@@ -107,14 +162,19 @@ const server = http.createServer(async (req, res) => {
     req.on("data", (c) => (body += c));
     await new Promise((r) => req.on("end", r));
     let cardUrl: string;
+    let source: Source = "local";
+    let prefetched: AgentCard | undefined;
     try {
-      cardUrl = JSON.parse(body).cardUrl;
+      const parsed = JSON.parse(body);
+      cardUrl = parsed.cardUrl;
+      if (parsed.source === "public") source = "public";
+      prefetched = parsed.card; // scanners already fetched it; don't make them pay twice
     } catch {
       return json(res, 400, { error: "body must be {\"cardUrl\": \"...\"}" });
     }
     try {
-      const entry = await refresh(cardUrl);
-      log(`registered ${entry.card.name} (${entry.card.skills.length} skills) from ${cardUrl}`);
+      const entry = await refresh(cardUrl, source, prefetched);
+      if (source === "local") log(`registered ${entry.card.name} (${entry.card.skills.length} skills) from ${cardUrl}`);
       return json(res, 200, { registered: entry.card.name, skills: entry.card.skills.map((s) => s.id) });
     } catch (err) {
       log(`failed to register ${cardUrl}:`, err instanceof Error ? err.message : err);
@@ -140,9 +200,28 @@ const server = http.createServer(async (req, res) => {
   // A flat index of every skill in the swarm -- handy for "what can this swarm do?"
   if (req.method === "GET" && url.pathname === "/skills") {
     const skills = [...agents.values()].flatMap((e) =>
-      e.card.skills.map((s) => ({ agent: e.card.name, url: e.card.url, online: e.online, id: s.id, tags: s.tags, description: s.description })),
+      (e.card.skills ?? []).map((s) => ({ agent: e.card.name, url: e.card.url, online: e.online, id: s.id, tags: s.tags, description: s.description })),
     );
     return json(res, 200, { skills });
+  }
+
+  if (req.method === "GET" && url.pathname === "/ui") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    return res.end(DASHBOARD_HTML);
+  }
+
+  if (req.method === "GET" && url.pathname === "/stats") {
+    const entries = [...agents.values()];
+    const tags = new Map<string, number>();
+    for (const e of entries) for (const s of e.card.skills ?? []) for (const t of s.tags ?? []) tags.set(t, (tags.get(t) ?? 0) + 1);
+    return json(res, 200, {
+      total: entries.length,
+      local: entries.filter((e) => e.source === "local").length,
+      public: entries.filter((e) => e.source === "public").length,
+      online: entries.filter((e) => e.online).length,
+      skills: entries.reduce((n, e) => n + (e.card.skills?.length ?? 0), 0),
+      topTags: [...tags].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([tag, count]) => ({ tag, count })),
+    });
   }
 
   if (req.method === "GET" && url.pathname === "/") {
@@ -155,12 +234,13 @@ const server = http.createServer(async (req, res) => {
         "GET /skills": "flat skill index across the swarm",
         "DELETE /agents/:name": "deregister",
       },
+      dashboard: `http://localhost:${PORT}/ui`,
       registered: [...agents.keys()],
     });
   }
 
   json(res, 404, { error: "not found" });
-});
+}
 
 server.listen(PORT, () => {
   log(`listening on http://localhost:${PORT}`);

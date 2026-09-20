@@ -17,7 +17,9 @@
     "demo:discovery": "node ts/demos/discovery.ts",
     "demo:orchestrator": "node ts/demos/orchestrator.ts",
     "demo:handoff": "node ts/demos/handoff.ts",
-    "demo:planner": "node ts/demos/orchestrator.ts \"Research agent swarms, then put the key points in the language they speak in Paris\""
+    "demo:planner": "node ts/demos/orchestrator.ts \"Research agent swarms, then put the key points in the language they speak in Paris\"",
+    "scan": "node ts/registry/scan.ts",
+    "ui": "open http://localhost:4000/ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0"

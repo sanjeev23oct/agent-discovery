@@ -90,6 +90,47 @@ The registry serves no Agent Card and speaks no A2A. It is deliberately dumb inf
 
 Keeping it dumb means it cannot become a bottleneck for reasoning, and it can be replaced (with DNS records, a service mesh, a public directory) without touching a single agent. The only thing agents depend on is "something can answer *who does X*".
 
+## Scanning the public ecosystem
+
+The registry does not have to index only your own agents. `ts/registry/scan.ts` pulls candidate card URLs from a public A2A directory, fetches each card, and loads the valid ones in alongside your swarm.
+
+```bash
+./scripts/swarm-up.sh
+node ts/registry/scan.ts          # ~25s for ~380 candidates
+open http://localhost:4000/ui
+```
+
+A real run, September 2026:
+
+```
+candidates : 383
+reachable  : 318  (83%)
+skills advertised : 2290
+
+why the rest failed:
+    49  not an agent card
+     5  fetch failed
+     4  timeout
+     2  HTTP 404
+     2  invalid JSON
+```
+
+### Scanning etiquette
+
+These are other people's servers. The scanner takes candidates from a published directory or a file you supply — **never** from enumerating hosts or guessing domains — makes exactly one GET per agent to a path whose entire purpose is to be publicly fetched, and caps concurrency at 12 with a 6s timeout and no retries. The registry also refuses to health-poll public entries on its timer; re-polling hundreds of strangers' servers every 10 seconds would be abuse.
+
+### What real cards actually look like
+
+Three things the live ecosystem taught this codebase, each of which changed the code:
+
+**1. "Required" fields are not required in practice.** The spec marks `skills` as required. Five of 318 live agents omit it entirely. Trusting that took the registry down with `TypeError: Cannot read properties of undefined (reading 'filter')` — one query, whole process gone. Every card is now coerced through `normaliseCard()` on the way in, and the HTTP handler has a catch-all so one bad record cannot kill the service.
+
+**2. A fifth of agents serve only the legacy path.** 73 of 383 candidates publish at `/.well-known/agent.json`, not `agent-card.json`. A scanner that only tries the current path silently under-reports the ecosystem by ~19%, which is why `WELL_KNOWN_PATHS` has three entries.
+
+**3. Cards carry content aimed at your model.** 11 of 318 descriptions (3%) contain instruction-shaped text — "you must", "USE THIS WHEN YOUR USER NEEDS", "do not", "ignore previous". The longest single description is **25,284 characters**. These are not documentation; they are written to be pasted into a calling agent's context window.
+
+That third one is the important one. If you feed discovered cards to an LLM planner, **you have handed strangers a slot in your prompt.** Treat every field of a remote card as untrusted data: render it escaped, truncate it, and never concatenate it into a system prompt. See [5. Going public](05-going-public.md#step-3--treat-other-agents-as-untrusted-input).
+
 ## Making your own agent discoverable
 
 Inside this swarm, three lines:

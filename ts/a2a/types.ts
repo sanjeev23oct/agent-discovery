@@ -13,6 +13,7 @@
 export const WELL_KNOWN_PATHS = [
   "/.well-known/agent-card.json", // v0.3.x, what almost everything deployed today uses
   "/.well-known/a2a-agent-card",  // v1.0 registered well-known URI
+  "/.well-known/agent.json",      // pre-0.3 legacy; ~19% of live public agents still serve only this
 ];
 
 export const PROTOCOL_VERSION = "0.3.0";

@@ -74,6 +74,22 @@ Discovery works at two levels, covered in [docs/03-discovery.md](docs/03-discove
 
 To make your agent discoverable beyond your laptop, see [docs/05-going-public.md](docs/05-going-public.md).
 
+## Scan the real ecosystem
+
+The registry can index public A2A agents from the internet next to your own, and ships a dashboard:
+
+```bash
+./scripts/swarm-up.sh
+node ts/registry/scan.ts     # ~25s
+open http://localhost:4000/ui
+```
+
+A real run indexed **318 reachable public agents advertising 2,290 skills**, alongside your 5 local ones. The dashboard filters by local/public, searches name, description, skill and tag, and shows the most common capability tags in the wild (`x402`, `trust`, `verification`, `mcp`, `a2a`…).
+
+Scanning is polite by construction: candidates come from a published directory, one GET each, concurrency 12, 6s timeout, no retries, and public entries are never health-polled on a timer.
+
+> **Discovered cards are untrusted input.** 3% of live public cards contain instruction-shaped text aimed at a calling model, one of them 25,284 characters long. Render them escaped; never concatenate them into a prompt. [docs/03](docs/03-discovery.md#what-real-cards-actually-look-like)
+
 ## Docs
 
 | | |

@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 WELL_KNOWN_PATHS = [
     "/.well-known/agent-card.json",
     "/.well-known/a2a-agent-card",
+    # Pre-0.3 legacy path. Roughly a fifth of live public agents still serve
+    # only this one, so a scanner that skips it under-reports the ecosystem.
+    "/.well-known/agent.json",
 ]
 
 PROTOCOL_VERSION = "0.3.0"

@@ -97,7 +97,15 @@ const COLOR = { commander:"var(--commander)", splunk:"var(--splunk)", servicenow
 const colorFor = (actor) => COLOR[actor] || COLOR[(actor||"").replace(/ \(mock\)$/,"")] || "var(--muted)";
 
 async function loadCards() {
-  const r = await fetch("/cards"); const d = await r.json();
+  let d;
+  try {
+    const r = await fetch("/cards");
+    d = await r.json();
+  } catch (err) {
+    // Leave whatever was last rendered rather than blanking the panel on one
+    // transient failure (e.g. the dashboard server mid-restart).
+    return;
+  }
   document.getElementById("cards").innerHTML = d.agents.map((e) => {
     const col = colorFor(e.key);
     if (!e.ok) return '<div class="card" style="border-top:3px solid ' + col + '"><h2><span class="dot" style="background:' + col + '"></span>' + esc(e.key) + '</h2><div class="offline">not reachable at ' + esc(e.base) + '</div></div>';
@@ -112,7 +120,13 @@ async function loadCards() {
 }
 
 async function loadRegistry() {
-  const r = await fetch("/registry"); const d = await r.json();
+  let d;
+  try {
+    const r = await fetch("/registry");
+    d = await r.json();
+  } catch (err) {
+    return; // same reasoning as loadCards(): keep the last good render
+  }
   const box = document.getElementById("registry");
   if (!d.ok) { box.innerHTML = '<div class="offline">registry not reachable at ' + esc(d.url) + '</div>'; return; }
   const tags = Object.entries(d.index || {}).sort((a,b) => a[0].localeCompare(b[0]));
@@ -173,15 +187,35 @@ async function ask() {
   const text = document.getElementById("q").value.trim();
   if (!text) return;
   btn.disabled = true;
+  btn.textContent = "Investigating…";
   addEvent({ actor: "ui", kind: "sending", detail: 'POST prod-support /  "' + text + '"' });
   const ans = document.getElementById("answer");
   ans.className = "answer";
-  const r = await fetch("/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
-  const d = await r.json();
-  ans.className = "answer show";
-  ans.textContent = d.error ? "Error: " + d.error.message : (d.result.artifacts?.[0]?.parts?.[0]?.text ?? "(no answer)");
-  btn.disabled = false;
-  loadRegistry();
+  // A hung fetch() with no explicit timeout is exactly what "stuck on
+  // Investigating" looks like -- neither success nor failure ever fires, so
+  // the finally block below never runs either. Bound it so the UI always
+  // recovers within a fixed window even if the server or network wedges.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  try {
+    const r = await fetch("/ask", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }), signal: controller.signal,
+    });
+    const d = await r.json();
+    ans.className = "answer show";
+    ans.textContent = d.error ? "Error: " + d.error.message : (d.result?.artifacts?.[0]?.parts?.[0]?.text ?? "(no answer)");
+    loadRegistry();
+  } catch (err) {
+    // Whatever went wrong -- network drop, server restart, a bad JSON body --
+    // surface it instead of leaving the button disabled with no explanation.
+    ans.className = "answer show";
+    ans.textContent = "Request failed: " + (err && err.name === "AbortError" ? "timed out after 25s" : String(err && err.message || err));
+  } finally {
+    clearTimeout(timeout);
+    btn.disabled = false;
+    btn.textContent = "Investigate";
+  }
 }
 btn.onclick = ask;
 document.getElementById("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });

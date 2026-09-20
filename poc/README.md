@@ -37,6 +37,20 @@ curl 'http://localhost:5010/agents?tag=logs'
 # -> {"tag":"logs","results":[{"card":{"name":"splunk (mock)", ...}, "matchedSkill":"logs.search"}]}
 ```
 
+## The "I can't do this myself" narrative
+
+Before every registry lookup, the commander says out loud why it's asking:
+
+```
+prod-support  CANT-DO-IT-MYSELF   I have no way to search logs myself -- checking the registry for an agent that does
+prod-support  QUERYING-REGISTRY   GET http://localhost:5010/agents?tag=logs
+prod-support  REGISTRY-HIT        registry says "splunk (mock)" offers "logs" (skill: logs.search)
+prod-support  CALLING             POST http://localhost:5011 -> message/send (skill: logs.search)
+splunk (mock) ANSWERED            critical :: 247 ERROR events in the last 15 minutes...
+```
+
+That five-line cycle -- **can't do it myself → ask the registry → found someone → call them → got an answer** -- repeats once per capability (`logs`, `incident`, `bug-tracker`, `oncall`). It's the clearest single thing to watch in the live dashboard to understand what a registry actually buys you.
+
 ## What the commander actually does
 
 [poc/commander.ts](commander.ts) never mentions Splunk, ServiceNow, Jira or

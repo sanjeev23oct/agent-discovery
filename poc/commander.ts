@@ -10,7 +10,7 @@
  * That is the entire point of this file. Compare it with poc/registry.ts's
  * findByTag(): the commander never knows an address, only a capability.
  */
-import { serve, findByTag, call, registerWithRegistry } from "./mini.ts";
+import { serve, findByTag, call, registerWithRegistry, trace } from "./mini.ts";
 
 const PORT = Number(process.env.PORT ?? 5001);
 const REGISTRY_URL = process.env.REGISTRY_URL ?? "http://localhost:5010";
@@ -36,6 +36,7 @@ const { card, ready } = serve({
     const steps: string[] = [];
 
     // ---- 1. logs: discover whoever is tagged "logs" and ask them ----
+    trace("prod-support", "cant-do-it-myself", "I have no way to search logs myself -- checking the registry for an agent that does");
     const logs = await findByTag(REGISTRY_URL, "logs", "prod-support");
     if (!logs) return "I couldn't find a logs agent registered. Nothing to investigate with.";
     const finding = await call(logs.card, text, logs.matchedSkill, "prod-support");
@@ -47,6 +48,7 @@ const { card, ready } = serve({
     }
 
     // ---- 2. incident: discover whoever is tagged "incident" ----
+    trace("prod-support", "cant-do-it-myself", "This needs an incident record and I don't open those myself -- checking the registry");
     const incidentAgent = await findByTag(REGISTRY_URL, "incident", "prod-support");
     let incidentRef = "";
     if (incidentAgent) {
@@ -60,6 +62,7 @@ const { card, ready } = serve({
     }
 
     // ---- 3. bug-tracker: discover whoever is tagged "bug-tracker" ----
+    trace("prod-support", "cant-do-it-myself", "Engineering will need a ticket and I can't file one -- checking the registry");
     const ticketAgent = await findByTag(REGISTRY_URL, "bug-tracker", "prod-support");
     if (ticketAgent) {
       const ticketText = await call(
@@ -73,6 +76,7 @@ const { card, ready } = serve({
 
     // ---- 4. oncall: only for a critical finding, discover whoever is tagged "oncall" ----
     if (severity === "critical") {
+      trace("prod-support", "cant-do-it-myself", "This is critical and someone needs to be paged -- I can't do that myself, checking the registry");
       const oncallAgent = await findByTag(REGISTRY_URL, "oncall", "prod-support");
       if (oncallAgent) {
         const pageText = await call(

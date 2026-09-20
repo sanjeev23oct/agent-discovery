@@ -63,10 +63,16 @@ def forward(message, self_name, output, context_id, log):
             log('handoff to {} failed ({}) -- trying the next capability'.format(client.card["name"], err))
             continue
 
-        if (task.get("status") or {}).get("state") != "completed":
-            log('{} returned "{}" -- trying the next capability'.format(
-                client.card["name"], (task.get("status") or {}).get("state")))
+        # message/send may legitimately answer with a bare Message instead of a
+        # Task -- several public agents do. Only a Task carries a state to check.
+        state = (task.get("status") or {}).get("state")
+        if state and state != "completed":
+            log('{} returned "{}" -- trying the next capability'.format(client.card["name"], state))
             continue
-        return task_output(task)
+        output = task_output(task)
+        if not output:
+            log("{} returned no readable output -- trying the next capability".format(client.card["name"]))
+            continue
+        return output
 
     return None

@@ -75,11 +75,19 @@ export async function forward(opts: {
         skill: peer.skillId,
         metadata: { route: rest, hops: trail },
       });
-      if (task.status.state !== "completed") {
-        opts.log(`${peer.client.card.name} returned "${task.status.state}" -- trying the next capability`);
+      // message/send may legitimately answer with a bare Message instead of a
+      // Task -- several public agents do. Only a Task carries a state to check.
+      const state = (task as any)?.status?.state;
+      if (state && state !== "completed") {
+        opts.log(`${peer.client.card.name} returned "${state}" -- trying the next capability`);
         continue;
       }
-      return taskOutput(task);
+      const output = taskOutput(task);
+      if (!output) {
+        opts.log(`${peer.client.card.name} returned no readable output -- trying the next capability`);
+        continue;
+      }
+      return output;
     } catch (err) {
       // The registry can be up to one health-check interval out of date, so a
       // peer it lists as online may already be gone. Expect this, don't crash.

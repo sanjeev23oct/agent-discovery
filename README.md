@@ -90,6 +90,20 @@ Scanning is polite by construction: candidates come from a published directory, 
 
 > **Discovered cards are untrusted input.** 3% of live public cards contain instruction-shaped text aimed at a calling model, one of them 25,284 characters long. Render them escaped; never concatenate them into a prompt. [docs/03](docs/03-discovery.md#what-real-cards-actually-look-like)
 
+## Call a real public agent
+
+```bash
+node ts/demos/call-public.ts
+```
+
+Four of five live public agents answer. Better: because scanned agents share the registry with yours, a local agent hands work to a stranger's agent by capability, with no address in the code:
+
+```
+researcher (TS, localhost) → summarizer (Python, localhost) → Sidequest Commons Guide (public internet)
+```
+
+Getting there took four client fixes, each found by a live failure — bare `Message` responses instead of `Task`, `data` parts instead of text, a CDN 403 on Python's default User-Agent, and a pre-0.3 agent using `type` instead of `kind`. [docs/03](docs/03-discovery.md#four-bugs-real-agents-found-in-this-client)
+
 ## Docs
 
 | | |

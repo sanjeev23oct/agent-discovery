@@ -131,6 +131,43 @@ Three things the live ecosystem taught this codebase, each of which changed the 
 
 That third one is the important one. If you feed discovered cards to an LLM planner, **you have handed strangers a slot in your prompt.** Treat every field of a remote card as untrusted data: render it escaped, truncate it, and never concatenate it into a system prompt. See [5. Going public](05-going-public.md#step-3--treat-other-agents-as-untrusted-input).
 
+## Consuming a public agent
+
+Discovery is only half of it. `ts/demos/call-public.ts` calls real public agents with this repo's own client:
+
+```bash
+node ts/demos/call-public.ts
+node ts/demos/call-public.ts https://host/a2a some-skill "your message"
+```
+
+And because scanned agents land in the same registry as your own, a **local agent can hand work to a stranger's agent with no code change** — `open-source` is a tag only a public agent advertises:
+
+```ts
+await researcher.send("agent swarms", {
+  skill: "research.gather",
+  metadata: { route: ["summarize", "open-source"], hops: [] },
+});
+```
+
+```
+researcher (TS, localhost) → summarizer (Python, localhost) → Sidequest Commons Guide (public internet)
+```
+
+No address appears anywhere in that call. Both hops are capability names resolved through the registry.
+
+### Four bugs real agents found in this client
+
+A client written only from the spec talked to four of five strangers' agents. Getting there took four fixes, each from a live failure:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Completed task looked empty | Agent answered with a `data` part; `taskOutput()` read only text | Read `data` and `file` parts too, and fall back to `status.message` |
+| Handoff silently dropped the reply | `message/send` may return a bare **Message**, not a Task; our code required `status.state === "completed"` | Only check state when a state exists |
+| `HTTP 403 Forbidden` from Python, while curl worked | stdlib default UA `Python-urllib/3.9` blocked at the CDN before reaching the agent | Send a real `User-Agent` from both clients |
+| `message.parts[0] must be type=text` | Pre-0.3 agent expects `type`, not `kind`, as the part discriminator | Read either spelling; that agent still times out, so it stays unreachable |
+
+The pattern is that **the spec describes a happy path and the wire has a long tail.** Anything you write against A2A needs to accept Task *or* Message, text *or* data parts, `kind` *or* `type`, and must identify itself over HTTP. None of that is exotic; all of it is invisible until you call someone else's server.
+
 ## Making your own agent discoverable
 
 Inside this swarm, three lines:

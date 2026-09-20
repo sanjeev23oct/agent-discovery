@@ -6,6 +6,13 @@ import urllib.request
 from .types import WELL_KNOWN_PATHS, new_id, text_part
 
 
+# Real public agents sit behind CDNs that block the stdlib default
+# ("Python-urllib/3.9") with a 403 before the request ever reaches the agent.
+# Identify ourselves properly or interop silently fails on someone else's edge.
+USER_AGENT = "agent-discovery/1.0 (+https://github.com/topics/a2a-protocol)"
+DEFAULT_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+
+
 class A2AError(Exception):
     def __init__(self, code, message):
         super(A2AError, self).__init__(message)
@@ -14,13 +21,16 @@ class A2AError(Exception):
 
 def _post_json(url, body, timeout=30):
     data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    headers = dict(DEFAULT_HEADERS)
+    headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as res:
         return json.loads(res.read().decode("utf-8"))
 
 
 def _get_json(url, timeout=5):
-    with urllib.request.urlopen(url, timeout=timeout) as res:
+    req = urllib.request.Request(url, headers=dict(DEFAULT_HEADERS))
+    with urllib.request.urlopen(req, timeout=timeout) as res:
         return json.loads(res.read().decode("utf-8"))
 
 
@@ -78,11 +88,40 @@ class A2AClient(object):
         return self._rpc("tasks/cancel", {"id": task_id})
 
 
-def task_output(task):
-    """Read the text out of a finished task's artifacts."""
-    out = []
-    for artifact in (task or {}).get("artifacts") or []:
-        for part in artifact.get("parts", []):
-            if part.get("kind") == "text":
-                out.append(part["text"])
-    return "\n".join(out)
+def _part_text(p):
+    kind = p.get("kind") or p.get("type")  # pre-0.3 agents use "type"
+    if kind == "text":
+        return str(p.get("text") or "")
+    if kind == "data":
+        return json.dumps(p.get("data", p), indent=2)
+    if kind == "file":
+        f = p.get("file") or {}
+        return "[file: {}]".format(f.get("name") or f.get("uri") or "unnamed")
+    return ""
+
+
+def task_output(result):
+    """Read a finished task's output.
+
+    Reading only text parts is the obvious implementation and it is wrong
+    against real agents: several public agents answer with a "data" part and no
+    text, some put the answer in status.message with no artifacts at all, and
+    pre-0.3 agents spell the part discriminator "type". message/send may also
+    return a bare Message instead of a Task, so accept either.
+    """
+    if not result:
+        return ""
+
+    def collect(parts):
+        return "\n".join(t for t in (_part_text(p) for p in parts or []) if t)
+
+    if result.get("kind") == "message" or (not result.get("status") and result.get("parts")):
+        return collect(result.get("parts"))
+
+    from_artifacts = "\n".join(
+        t for t in (collect(a.get("parts")) for a in result.get("artifacts") or []) if t
+    )
+    if from_artifacts:
+        return from_artifacts
+
+    return collect(((result.get("status") or {}).get("message") or {}).get("parts"))

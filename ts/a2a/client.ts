@@ -6,7 +6,10 @@
  * registry required -- the card is the contract.
  */
 import { WELL_KNOWN_PATHS, newId, textPart } from "./types.ts";
-import type { AgentCard, Message, Part, Task } from "./types.ts";
+import type { AgentCard, Message, Task } from "./types.ts";
+
+/** Identify ourselves: CDNs in front of real agents block anonymous clients. */
+export const USER_AGENT = "agent-discovery/1.0 (+https://github.com/topics/a2a-protocol)";
 
 export class A2AError extends Error {
   code: number;
@@ -23,7 +26,10 @@ export async function fetchAgentCard(baseUrl: string, timeoutMs = 4000): Promise
   for (const path of WELL_KNOWN_PATHS) {
     const cardUrl = new URL(path, baseUrl).toString();
     try {
-      const res = await fetch(cardUrl, { signal: AbortSignal.timeout(timeoutMs) });
+      const res = await fetch(cardUrl, {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: { accept: "application/json", "user-agent": USER_AGENT },
+      });
       if (!res.ok) {
         errors.push(`${cardUrl} -> HTTP ${res.status}`);
         continue;
@@ -64,7 +70,7 @@ export class A2AClient {
   private async rpc(method: string, params: Record<string, unknown>, timeoutMs = 30000) {
     const res = await fetch(this.card.url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "user-agent": USER_AGENT },
       body: JSON.stringify({ jsonrpc: "2.0", id: newId("req"), method, params }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -127,11 +133,39 @@ export class A2AClient {
   }
 }
 
-/** Read the text out of a finished task's artifacts. */
-export function taskOutput(task: Task): string {
-  return (task.artifacts ?? [])
-    .flatMap((a) => a.parts)
-    .filter((p): p is Extract<Part, { kind: "text" }> => p.kind === "text")
-    .map((p) => p.text)
-    .join("\n");
+/**
+ * Read a finished task's output.
+ *
+ * Reading only text parts is the obvious implementation and it is wrong against
+ * real agents: several public agents answer with a `data` part and no text at
+ * all, which made a completed task look empty. Some return no artifacts and put
+ * the answer in `status.message`. And pre-0.3 agents spell the discriminator
+ * `type` rather than `kind`.
+ *
+ * `message/send` may also return a bare Message instead of a Task, so this
+ * accepts either.
+ */
+export function taskOutput(result: Task | Message | null | undefined): string {
+  if (!result) return "";
+
+  const partText = (p: any): string => {
+    const kind = p?.kind ?? p?.type; // pre-0.3 agents use `type`
+    if (kind === "text") return String(p.text ?? "");
+    if (kind === "data") return JSON.stringify(p.data ?? p, null, 2);
+    if (kind === "file") return `[file: ${p.file?.name ?? p.file?.uri ?? "unnamed"}]`;
+    return "";
+  };
+  const collect = (parts: any[]) => parts.map(partText).filter(Boolean).join("\n");
+
+  // A bare Message response.
+  if ((result as any).kind === "message" || (!(result as any).status && Array.isArray((result as any).parts))) {
+    return collect((result as any).parts ?? []);
+  }
+
+  const task = result as Task;
+  const fromArtifacts = (task.artifacts ?? []).flatMap((a) => collect(a.parts ?? [])).filter(Boolean).join("\n");
+  if (fromArtifacts) return fromArtifacts;
+
+  // Fall back to whatever the agent said in its final status.
+  return collect(task.status?.message?.parts ?? []);
 }

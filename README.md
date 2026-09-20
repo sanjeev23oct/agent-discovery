@@ -10,6 +10,24 @@ Five agents, in **two languages**, coordinating over the wire. Nothing is hardco
 
 **Zero dependencies.** No `npm install`, no `pip install`, no API keys, no network access. Node ≥ 22.6 (for native TypeScript) and Python 3 are all you need.
 
+## Start here: two agents talking
+
+If you want the idea in one sitting, skip the swarm and read [poc/](poc/) — two agents, two ports, ~170 lines total, no dependencies:
+
+```bash
+./poc/run.sh
+```
+
+```
+[alice] I can't do maths. Looking for a peer at http://localhost:5002...
+[alice] found "bob" -- Evaluates arithmetic expressions.
+[alice] its skills: math.evaluate [math, calculate, arithmetic]
+[alice] "math.evaluate" is tagged "math" -- delegating
+answer: I asked bob (math.evaluate) and it said: 12 * 34 + 7 = 415
+```
+
+Alice is told one thing about Bob: a URL. His name, description and skills she reads from his card at runtime, and she matches on the **tag** `math`, never on his skill's name. Swap in `carol.ts`, whose skill is called `arithmetic.compute` instead, and Alice works with her unchanged. See [poc/README.md](poc/README.md).
+
 ## Quick start
 
 ```bash

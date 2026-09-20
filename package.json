@@ -20,7 +20,9 @@
     "demo:planner": "node ts/demos/orchestrator.ts \"Research agent swarms, then put the key points in the language they speak in Paris\"",
     "scan": "node ts/registry/scan.ts",
     "ui": "open http://localhost:4000/ui",
-    "demo:public": "node ts/demos/call-public.ts"
+    "demo:public": "node ts/demos/call-public.ts",
+    "poc": "./poc/run.sh",
+    "poc:ui": "./poc/run-ui.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0"

@@ -5,7 +5,7 @@
  * advertised tags, and delegates. The only thing she is told about Bob is
  * where he lives -- everything else she learns from his card at runtime.
  */
-import { serve, discover, call } from "./mini.ts";
+import { serve, discover, call, trace } from "./mini.ts";
 
 const PEER = process.env.PEER ?? "http://localhost:5002";
 
@@ -22,17 +22,21 @@ serve({
 
     // ---- discovery ----
     console.log(`[alice] I can't do maths. Looking for a peer at ${PEER}...`);
-    const peerCard = await discover(PEER);
+    const peerCard = await discover(PEER, "alice");
     console.log(`[alice] found "${peerCard.name}" -- ${peerCard.description}`);
     console.log(`[alice] its skills: ${peerCard.skills.map((s) => `${s.id} [${s.tags.join(", ")}]`).join(" | ")}`);
 
     // ---- capability matching: pick a skill by tag, not by name ----
     const skill = peerCard.skills.find((s) => s.tags.includes("math"));
-    if (!skill) return `${peerCard.name} cannot do maths either.`;
+    if (!skill) {
+      trace("alice", "no-match", `no skill of ${peerCard.name} is tagged "math"`);
+      return `${peerCard.name} cannot do maths either.`;
+    }
     console.log(`[alice] "${skill.id}" is tagged "math" -- delegating`);
+    trace("alice", "matched", `"${skill.id}" is tagged "math" -- I never named this skill in my code`, { skillId: skill.id });
 
     // ---- delegation ----
-    const answer = await call(peerCard, text, skill.id);
+    const answer = await call(peerCard, text, skill.id, "alice");
     return `I asked ${peerCard.name} (${skill.id}) and it said: ${answer}`;
   },
 });

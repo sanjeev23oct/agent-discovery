@@ -26,7 +26,9 @@ If you want the idea in one sitting, skip the swarm and read [poc/](poc/) — tw
 answer: I asked bob (math.evaluate) and it said: 12 * 34 + 7 = 415
 ```
 
-Alice is told one thing about Bob: a URL. His name, description and skills she reads from his card at runtime, and she matches on the **tag** `math`, never on his skill's name. Swap in `carol.ts`, whose skill is called `arithmetic.compute` instead, and Alice works with her unchanged. See [poc/README.md](poc/README.md).
+Alice is told one thing about Bob: a URL. His name, description and skills she reads from his card at runtime, and she matches on the **tag** `math`, never on his skill's name. Swap in `carol.ts`, whose skill is called `arithmetic.compute` instead, and Alice works with her unchanged.
+
+Want to *see* it instead of reading logs? `./poc/run-ui.sh` opens a dashboard with both Agent Cards fetched live, and a real-time trace of discovery and delegation as they happen — nothing simulated, the agents report what they're already doing. See [poc/README.md](poc/README.md).
 
 ## Quick start
 

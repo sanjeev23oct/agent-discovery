@@ -22,13 +22,26 @@ state:  completed
 answer: I asked bob (math.evaluate) and it said: 12 * 34 + 7 = 415
 ```
 
-## The three files
+## See it, not just read it
+
+```bash
+./poc/run-ui.sh
+```
+
+Opens a dashboard at `http://localhost:5099` with:
+- **Both Agent Cards, fetched live** from `/.well-known/agent-card.json` on each agent — not a hardcoded description.
+- **A live trace** of every discovery and delegation step, in the order it actually happened, as it happens. Ask a preset question or type your own.
+
+Nothing on that page is simulated. `TRACE_URL` gets set on both agents; each one reports what it's already doing (serving a card, fetching a peer's card, matching a tag, calling a peer) to `ui.ts` over a fire-and-forget HTTP POST, and the browser gets it over Server-Sent Events. Unset `TRACE_URL` and the agents behave identically with no UI attached — tracing is observation, not part of the protocol.
+
+## The four files
 
 | File | Lines | What it is |
 |---|---|---|
-| [mini.ts](mini.ts) | 100 | The whole protocol: serve a card, answer `message/send`, fetch a card, call an agent |
+| [mini.ts](mini.ts) | ~115 | The whole protocol: serve a card, answer `message/send`, fetch a card, call an agent |
 | [bob.ts](bob.ts) | 32 | Does arithmetic. Publishes a card. Never calls anyone. |
-| [alice.ts](alice.ts) | 38 | Cannot do arithmetic. Reads Bob's card and delegates. |
+| [alice.ts](alice.ts) | ~42 | Cannot do arithmetic. Reads Bob's card and delegates. |
+| [ui.ts](ui.ts) + [ui-html.ts](ui-html.ts) | ~190 | Optional: the live dashboard. Not part of the protocol; a spectator. |
 
 Read `mini.ts` once and the other two are trivial.
 

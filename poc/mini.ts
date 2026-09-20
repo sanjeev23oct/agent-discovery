@@ -16,6 +16,36 @@ export type Card = {
 
 const id = (p: string) => `${p}-${Math.random().toString(36).slice(2, 8)}`;
 
+/**
+ * Optional tracing. When TRACE_URL is set, each agent reports what it is doing
+ * so poc/ui.ts can draw it. Fire-and-forget: tracing must never change or
+ * delay the protocol, so failures are swallowed.
+ */
+const TRACE_URL = process.env.TRACE_URL;
+
+/**
+ * A single trace() call must never block the caller -- that would mean the
+ * demo's *observability* changes the protocol's own timing, which defeats
+ * the point of tracing in the first place.
+ *
+ * But two trace() calls made back-to-back (e.g. "matched" then "calling",
+ * fired synchronously one after another before either's network request
+ * lands) are not guaranteed to arrive at the UI server in the order they
+ * were made -- two unawaited fetch()s can race. The fix is not to await
+ * each call at the call site (that reintroduces the latency problem); it is
+ * to chain the underlying sends onto one promise per process, so the sends
+ * themselves go out strictly in program order while trace() itself still
+ * returns immediately.
+ */
+let sendQueue: Promise<unknown> = Promise.resolve();
+export function trace(actor: string, kind: string, detail: string, extra: Record<string, unknown> = {}) {
+  if (!TRACE_URL) return;
+  const body = JSON.stringify({ actor, kind, detail, at: Date.now(), ...extra });
+  sendQueue = sendQueue.then(() =>
+    fetch(TRACE_URL, { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {}),
+  );
+}
+
 /** Start an agent: publish a card, answer `message/send`. */
 export function serve(opts: {
   name: string; description: string; port: number;
@@ -43,7 +73,16 @@ export function serve(opts: {
     };
 
     // 1. Discovery: anyone who can reach this host can read what we do.
-    if (req.method === "GET" && req.url === "/.well-known/agent-card.json") return send(200, card);
+    if (req.method === "GET" && req.url === "/.well-known/agent-card.json") {
+      // The UI's own side-panel polls this every few seconds to keep the
+      // cards fresh. That is real traffic, but it is not a protocol event
+      // worth showing in a "who called whom" timeline, so it identifies
+      // itself and we skip tracing just that one source.
+      if (req.headers["x-poc-ui-poll"] !== "1") {
+        trace(opts.name, "card-served", `served my Agent Card (${card.skills.length} skill(s))`);
+      }
+      return send(200, card);
+    }
 
     // 2. Work: one JSON-RPC method, `message/send`, returning a Task.
     if (req.method === "POST") {
@@ -55,8 +94,10 @@ export function serve(opts: {
       const skillId = msg?.metadata?.skill ?? card.skills[0].id;
 
       console.log(`[${opts.name}] <- "${text}" (skill: ${skillId})`);
+      trace(opts.name, "received", `got "${text}" for skill ${skillId}`, { skillId });
       const answer = await opts.handle(text, skillId);
       console.log(`[${opts.name}] -> "${answer}"`);
+      trace(opts.name, "answered", answer);
 
       return send(200, {
         jsonrpc: "2.0", id: rpc.id,
@@ -75,14 +116,18 @@ export function serve(opts: {
 }
 
 /** Read another agent's card. This is discovery: no registry, no config. */
-export async function discover(baseUrl: string): Promise<Card> {
+export async function discover(baseUrl: string, who = "?"): Promise<Card> {
+  trace(who, "discovering", `fetching ${baseUrl}/.well-known/agent-card.json`);
   const res = await fetch(`${baseUrl}/.well-known/agent-card.json`);
   if (!res.ok) throw new Error(`no card at ${baseUrl} (HTTP ${res.status})`);
-  return res.json() as Promise<Card>;
+  const card = (await res.json()) as Card;
+  trace(who, "discovered", `read ${card.name}'s card: ${card.skills.map((s) => s.id).join(", ")}`, { card });
+  return card;
 }
 
 /** Call an agent described by a card, and return its answer text. */
-export async function call(card: Card, text: string, skillId: string): Promise<string> {
+export async function call(card: Card, text: string, skillId: string, who = "?"): Promise<string> {
+  trace(who, "calling", `POST ${card.url} -> message/send (skill: ${skillId})`, { to: card.name, skillId });
   const res = await fetch(card.url, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -21,6 +21,7 @@ sleep 0.7   # let the registry bind before agents try to register
 start researcher   node ts/agents/researcher.ts
 start orchestrator node ts/agents/orchestrator.ts
 start notifier     node ts/agents/notifier.ts
+start news         node ts/agents/news.ts
 start summarizer   "$PY" py/agents/summarizer.py
 start translator   "$PY" py/agents/translator.py
 
@@ -28,7 +29,7 @@ echo
 echo "waiting for registration..."
 for _ in $(seq 1 40); do
   count=$(curl -fsS http://localhost:4000/agents 2>/dev/null | grep -c '"name"' || true)
-  [ "${count:-0}" -ge 5 ] && break
+  [ "${count:-0}" -ge 6 ] && break
   sleep 0.25
 done
 

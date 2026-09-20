@@ -19,23 +19,56 @@ import { discover } from "../a2a/registry-client.ts";
 
 const run = promisify(execFile);
 
+/** execFile, but the prompt is written to stdin instead of the argument list. */
+function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: number) {
+  return new Promise<{ stdout: string }>((resolve, reject) => {
+    const child = execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout) => (err ? reject(err) : resolve({ stdout })));
+    child.stdin?.end(input);
+  });
+}
+
+/** Remote text is data, never prompt structure: one line, bounded length. */
+function sanitise(text: string | undefined): string {
+  return String(text ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_DESCRIPTION);
+}
+
 export type Step = { capability: string; instruction: string };
 export type PlannerKind = "claude-api" | "claude-code" | "rules";
 export type Plan = { steps: Step[]; reasoning: string; planner: PlannerKind };
 
 const MODEL = process.env.PLANNER_MODEL ?? "claude-opus-5";
 
+/**
+ * Limits on what reaches the planner prompt.
+ *
+ * Both exist because of a real failure. Once the registry held 318 scanned
+ * public agents, the catalogue was 3,349 capabilities and the CLI planner died
+ * with `spawn E2BIG` -- the prompt exceeded the OS argument limit.
+ *
+ * The size fix is only half of it. Those descriptions are written by strangers,
+ * and ~3% of live public cards contain instruction-shaped text aimed at a
+ * reading model. So planning is scoped to agents we run, and any description
+ * that does reach the prompt is truncated and stripped of line breaks so it
+ * cannot forge structure in the prompt. See docs/03-discovery.md.
+ */
+const MAX_CAPABILITIES = 60;
+const MAX_DESCRIPTION = 140;
+
 /** What the swarm can currently do, straight from the registry. */
-export async function capabilityCatalog() {
-  const agents = await discover({});
+export async function capabilityCatalog(scope: "local" | "public" | "all" = "local") {
+  const agents = await discover(scope === "all" ? {} : { source: scope });
   const capabilities = new Map<string, { description: string; agents: string[] }>();
   for (const entry of agents) {
     if (entry.agent.name === "orchestrator") continue; // don't plan to call ourselves
     for (const skill of entry.agent.skills) {
-      for (const tag of skill.tags) {
+      for (const tag of skill.tags ?? []) {
         const existing = capabilities.get(tag);
-        if (existing) existing.agents.push(entry.agent.name);
-        else capabilities.set(tag, { description: skill.description, agents: [entry.agent.name] });
+        if (existing) {
+          if (!existing.agents.includes(entry.agent.name)) existing.agents.push(entry.agent.name);
+        } else if (capabilities.size < MAX_CAPABILITIES) {
+          capabilities.set(tag, { description: sanitise(skill.description), agents: [entry.agent.name] });
+        }
       }
     }
   }
@@ -110,8 +143,10 @@ async function planWithClaudeCode(request: string, log: (...a: unknown[]) => voi
 
   log(`asking the Claude Code CLI to plan over ${tags.length} live capabilities`);
 
+  // The prompt goes on stdin. Passing it as an argument is what produced
+  // E2BIG once the catalogue grew.
   const args = [
-    "-p", prompt,
+    "-p",
     "--output-format", "json",
     "--system-prompt", SYSTEM_PROMPT,
     // Keep the planner cheap: no tools, no Claude Code's own dynamic preamble.
@@ -120,7 +155,7 @@ async function planWithClaudeCode(request: string, log: (...a: unknown[]) => voi
   ];
   if (process.env.PLANNER_MODEL) args.push("--model", process.env.PLANNER_MODEL);
 
-  const { stdout } = await run("claude", args, { timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
+  const { stdout } = await runWithStdin("claude", args, prompt, 120000);
   const envelope = JSON.parse(stdout);
   if (envelope.is_error) throw new Error(envelope.result ?? "claude CLI reported an error");
 

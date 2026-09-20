@@ -36,6 +36,7 @@ tail -f .swarm/logs/*.log
 | `notifier` | TS | 4103 | `notify.publish` | notify, publish, deliver |
 | `summarizer` | **Py** | 4201 | `text.summarize` | summarize, condense, shorten |
 | `translator` | **Py** | 4202 | `text.translate` | translate, french, language |
+| `news` | TS | 4104 | `news.headlines` | news, headlines, current-events |
 
 The TypeScript and Python agents share no library, no types and no codegen. They interoperate because they agree on the JSON on the wire — which is the entire argument for having a protocol.
 
@@ -113,6 +114,7 @@ Getting there took four client fixes, each found by a live failure — bare `Mes
 | [03-discovery.md](docs/03-discovery.md) | Well-known URIs, registries, and capability matching |
 | [04-swarm-patterns.md](docs/04-swarm-patterns.md) | Orchestrator vs. handoff vs. fan-out vs. blackboard |
 | [05-going-public.md](docs/05-going-public.md) | Exposing your agent safely to the outside world |
+| [06-does-this-pay-off.md](docs/06-does-this-pay-off.md) | **Honest assessment** — what 318 live public agents actually sell, and when a swarm is the wrong answer |
 
 ## Reading the code
 

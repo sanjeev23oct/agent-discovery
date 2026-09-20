@@ -28,7 +28,12 @@ export const UI_HTML = String.raw`<!doctype html>
   h3 { font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:20px 0 8px; }
 
   .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:13px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:13px; cursor:pointer; }
+  .card:hover { border-color:var(--muted); }
+  .card:focus-visible { outline:2px solid var(--commander); outline-offset:1px; }
+  .card-toggle { font-size:11px; color:var(--muted); margin-top:8px; border-top:1px dashed var(--line); padding-top:6px; }
+  .card-json { display:none; margin-top:6px; background:var(--bg); border-radius:6px; padding:8px; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; }
+  .card-json.show { display:block; }
   .card h2 { margin:0 0 2px; font-size:14.5px; display:flex; align-items:center; gap:6px; }
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
   .url { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10.5px; color:var(--muted); margin:2px 0 8px; word-break:break-all; }
@@ -96,28 +101,60 @@ const COLOR = { commander:"var(--commander)", splunk:"var(--splunk)", servicenow
   registry:"var(--registry)", ui:"var(--ui)" };
 const colorFor = (actor) => COLOR[actor] || COLOR[(actor||"").replace(/ \(mock\)$/,"")] || "var(--muted)";
 
+// Cards are clickable -- see the "why clicking a card seemed to do nothing"
+// note below the renderer. Expanded state survives the 8s auto-refresh by
+// tracking which keys are open separately from the fetched data itself.
+const expandedCards = new Set();
+let lastCardsData = null;
+
 async function loadCards() {
-  let d;
   try {
     const r = await fetch("/cards");
-    d = await r.json();
+    lastCardsData = await r.json();
   } catch (err) {
     // Leave whatever was last rendered rather than blanking the panel on one
     // transient failure (e.g. the dashboard server mid-restart).
     return;
   }
-  document.getElementById("cards").innerHTML = d.agents.map((e) => {
+  renderCards();
+}
+
+function renderCards() {
+  if (!lastCardsData) return;
+  document.getElementById("cards").innerHTML = lastCardsData.agents.map((e) => {
     const col = colorFor(e.key);
-    if (!e.ok) return '<div class="card" style="border-top:3px solid ' + col + '"><h2><span class="dot" style="background:' + col + '"></span>' + esc(e.key) + '</h2><div class="offline">not reachable at ' + esc(e.base) + '</div></div>';
+    if (!e.ok) return '<div class="card" data-key="' + esc(e.key) + '" style="border-top:3px solid ' + col + '"><h2><span class="dot" style="background:' + col + '"></span>' + esc(e.key) + '</h2><div class="offline">not reachable at ' + esc(e.base) + '</div></div>';
     const c = e.card;
     const skills = (c.skills||[]).map((s) =>
       '<div class="skill"><code>' + esc(s.id) + '</code> — ' + esc(s.description) + '<div>' +
       (s.tags||[]).map((t) => '<span class="chip">' + esc(t) + '</span>').join("") + '</div></div>').join("");
-    return '<div class="card" style="border-top:3px solid ' + col + '"><h2><span class="dot" style="background:' + col + '"></span>' + esc(c.name) + '</h2>' +
+    const open = expandedCards.has(e.key);
+    return '<div class="card" data-key="' + esc(e.key) + '" tabindex="0" role="button" aria-expanded="' + open + '" style="border-top:3px solid ' + col + '"><h2><span class="dot" style="background:' + col + '"></span>' + esc(c.name) + '</h2>' +
       '<div class="url">' + esc(e.base) + '</div>' +
-      '<div class="desc">' + esc(c.description) + '</div>' + skills + '</div>';
+      '<div class="desc">' + esc(c.description) + '</div>' + skills +
+      '<div class="card-toggle">' + (open ? "▴ hide" : "▾ view") + ' raw card JSON</div>' +
+      '<pre class="card-json' + (open ? " show" : "") + '">' + esc(JSON.stringify(c, null, 2)) + '</pre></div>';
   }).join("");
 }
+
+// Clicking a card previously did nothing at all -- no feedback, no error,
+// nothing -- which reads as "stuck" if you click one expecting a response.
+// Event delegation (not a per-card listener) because renderCards() rebuilds
+// the DOM on every refresh; per-element listeners would be silently lost.
+document.getElementById("cards").addEventListener("click", (e) => {
+  const card = e.target.closest(".card");
+  if (!card) return;
+  const key = card.dataset.key;
+  if (expandedCards.has(key)) expandedCards.delete(key); else expandedCards.add(key);
+  renderCards();
+});
+document.getElementById("cards").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const card = e.target.closest(".card");
+  if (!card) return;
+  e.preventDefault();
+  card.click();
+});
 
 async function loadRegistry() {
   let d;

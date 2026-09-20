@@ -11,34 +11,13 @@
 import { createAgent } from "../a2a/server.ts";
 import { register, discover, findOne } from "../a2a/registry-client.ts";
 import { taskOutput } from "../a2a/client.ts";
-import { textPart, newId } from "../a2a/types.ts";
+import { textPart } from "../a2a/types.ts";
+import { plan } from "./planner.ts";
+import type { Step } from "./planner.ts";
 
 const PORT = Number(process.env.PORT ?? 4102);
 // Public address other agents will use. Must not be localhost once exposed.
 const BASE_URL = process.env.BASE_URL;
-
-type Step = { capability: string; instruction: string };
-
-/**
- * Build a plan from the request. This is the one place a real system would put
- * an LLM: "here are the capabilities available in the swarm, pick and order
- * the ones that serve this request". The rule-based version keeps the demo
- * deterministic and offline -- see docs/04-swarm-patterns.md to swap it out.
- */
-function plan(request: string): Step[] {
-  const lower = request.toLowerCase();
-  const steps: Step[] = [{ capability: "research", instruction: request }];
-  if (lower.includes("summar") || lower.includes("brief") || lower.includes("short")) {
-    steps.push({ capability: "summarize", instruction: "Summarise the findings below." });
-  }
-  if (lower.includes("translat") || lower.includes("french") || lower.includes("spanish")) {
-    steps.push({ capability: "translate", instruction: "Translate the text below." });
-  }
-  if (lower.includes("brief") || lower.includes("publish") || lower.includes("report")) {
-    steps.push({ capability: "notify", instruction: "Publish this as a briefing." });
-  }
-  return steps;
-}
 
 const agent = createAgent({
   name: "orchestrator",
@@ -54,11 +33,15 @@ const agent = createAgent({
       examples: ["Research the A2A protocol and give me a short briefing in French"],
       handler: async (ctx) => {
         const contextId = ctx.task.contextId;
-        const steps = plan(ctx.text);
-        ctx.progress(`planned ${steps.length} step(s): ${steps.map((s) => s.capability).join(" -> ")}`);
 
         const available = await discover({});
         ctx.log(`swarm has ${available.length} agent(s) online: ${available.map((a) => a.agent.name).join(", ")}`);
+
+        // Planning is the seam where a model replaces rules. Either way the
+        // plan is a list of capabilities resolved against the live registry.
+        const { steps, reasoning, planner } = await plan(ctx.text, ctx.log);
+        ctx.progress(`[${planner}] planned ${steps.length} step(s): ${steps.map((s: Step) => s.capability).join(" -> ")}`);
+        ctx.log(`reasoning: ${reasoning}`);
 
         const trace: string[] = [];
         let payload = ctx.text;
@@ -100,10 +83,10 @@ const agent = createAgent({
         return {
           parts: [
             textPart(payload),
-            { kind: "data", data: { plan: steps.map((s) => s.capability), trace, contextId } },
+            { kind: "data", data: { planner, reasoning, plan: steps.map((s: Step) => s.capability), trace, contextId } },
           ],
           artifactName: "swarm-result",
-          metadata: { steps: steps.length, contextId },
+          metadata: { steps: steps.length, planner, contextId },
         };
       },
     },

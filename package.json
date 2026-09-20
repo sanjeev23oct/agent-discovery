@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Agent swarms, the A2A protocol, and agent discovery -- a runnable, dependency-free demo in TypeScript and Python.",
-  "engines": { "node": ">=22.6.0" },
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "up": "./scripts/swarm-up.sh",
     "down": "./scripts/swarm-down.sh",
@@ -14,6 +16,13 @@
     "agent:notifier": "node ts/agents/notifier.ts",
     "demo:discovery": "node ts/demos/discovery.ts",
     "demo:orchestrator": "node ts/demos/orchestrator.ts",
-    "demo:handoff": "node ts/demos/handoff.ts"
+    "demo:handoff": "node ts/demos/handoff.ts",
+    "demo:planner": "node ts/demos/orchestrator.ts \"Research agent swarms, then put the key points in the language they speak in Paris\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.127.0"
   }
 }

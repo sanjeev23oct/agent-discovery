@@ -23,6 +23,9 @@ console.log(`task ${task.id}  state=${task.status.state}  context=${task.context
 
 const data = (task.artifacts ?? []).flatMap((a) => a.parts).find((p) => p.kind === "data");
 if (data && data.kind === "data") {
+  console.log(`planner: ${data.data.planner}  ("${data.data.reasoning}")`);
+  console.log(`plan:    ${(data.data.plan as string[]).join(" -> ")}`);
+  console.log();
   console.log("delegation trace:");
   for (const step of data.data.trace as string[]) console.log(`  ${step}`);
   console.log();

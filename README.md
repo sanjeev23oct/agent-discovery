@@ -117,8 +117,44 @@ curl -X POST localhost:4201 -H 'content-type: application/json' \
        "parts":[{"kind":"text","text":"summarise this please"}]}}}'
 ```
 
+## Optional: plan with a real model
+
+The swarm runs with zero dependencies and plans with keyword rules. Those rules are brittle on purpose — ask for "the language they speak in Paris" and the plan collapses to a single `research` step.
+
+To plan with a model instead, [ts/agents/planner.ts](ts/agents/planner.ts) tries three backends in order:
+
+| Backend | Requirement | How the capability list is enforced |
+|---|---|---|
+| `claude-api` | `ANTHROPIC_API_KEY` + `npm i @anthropic-ai/sdk` | structured outputs — the schema `enum` **is** the live registry, so a bad step is unrepresentable |
+| `claude-code` | the `claude` CLI, already logged in | **no API key needed** — runs on your Claude Code subscription; the plan is validated against the registry client-side |
+| `rules` | nothing | keyword matching |
+
+If you already use Claude Code, the second one needs no setup at all:
+
+```bash
+./scripts/swarm-up.sh
+./scripts/demo-orchestrator.sh "Research agent swarms, then put the key points in the language they speak in Paris"
+```
+
+```
+planner: claude-code  ("Gather raw findings on agent swarms, condense them to key
+                        points, then translate into French; no delivery step was requested.")
+plan:    research -> summarize -> translate
+```
+
+The rule-based planner returns just `research` for that sentence. The model also *declines* steps — no `notify`, because nothing asked for delivery.
+
+**The plan follows the live swarm.** Kill the translator, wait for the health check, ask the identical question:
+
+```
+[orchestrator] asking the Claude Code CLI to plan over 10 live capabilities
+plan:    research -> condense
+```
+
+No translate step, because no agent provides it. Restart the translator and it returns. Nothing is redeployed and no prompt is edited — the capability list *is* the registry. Any planner failure falls back down the chain, so the swarm always answers.
+
 ## What is deliberately not here
 
-The agents' actual *thinking* is rule-based — a note lookup, a longest-lines summariser, a toy French glossary. That keeps the demo deterministic, offline, and free to run, and it keeps your attention on the coordination rather than on model output. Every place an LLM belongs is marked in the code and listed in [docs/04-swarm-patterns.md](docs/04-swarm-patterns.md#where-the-llm-goes).
+Apart from planning, the agents' *thinking* is rule-based — a note lookup, a longest-lines summariser, a toy French glossary. That keeps the demo deterministic, offline and free, and keeps your attention on coordination rather than model output. The remaining places an LLM belongs are marked in the code and tabled in [docs/04-swarm-patterns.md](docs/04-swarm-patterns.md#where-the-llm-goes).
 
 Also out of scope: authentication, push notifications, task persistence, and signed cards. [docs/05-going-public.md](docs/05-going-public.md) explains what you must add before exposing any of this publicly.

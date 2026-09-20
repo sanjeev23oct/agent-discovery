@@ -106,17 +106,97 @@ Agents subscribe to a shared task board and volunteer when a posted task matches
 
 ## Where the LLM goes
 
-Everything here is rule-based so the demo is deterministic, offline and free. There are exactly four places a model belongs, all marked in the code:
+Most of this repo is rule-based so the demo is deterministic, offline and free. **Planning is the exception — it is wired to a real Claude call**, because it is where rules most obviously fail.
 
-| Place | File | What the model would do |
+### The failure that motivates it
+
+```bash
+./scripts/demo-orchestrator.sh "Research agent swarms, then put the key points in the language they speak in Paris"
+```
+
+With the rule-based planner the plan collapses to a single step:
+
+```
+planner: rules  ("matched keywords in the request")
+plan:    research
+```
+
+"key points" is not the substring `summar`. "Paris" is not `french`. `planWithRules` in [ts/agents/planner.ts](../ts/agents/planner.ts) does exactly what it says, and what it says is not enough.
+
+### Turning on the model planner
+
+Three backends, tried in order. All are optional — without any of them the swarm still runs on rules.
+
+**1. `claude-code` — your existing Claude Code subscription, no API key.**
+
+```bash
+./scripts/swarm-up.sh     # nothing else to install if `claude` is on your PATH
+```
+
+`planWithClaudeCode` shells out to `claude -p ... --output-format json`. It never touches your credential store; the CLI authenticates however it already does. Because the CLI has no `output_config.format`, the plan is *asked for* rather than constrained — so the planner validates each returned capability against the registry and drops any the swarm cannot serve.
+
+**2. `claude-api` — an explicit key, with schema enforcement.**
+
+```bash
+npm install @anthropic-ai/sdk
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**3. `rules` — the fallback.**
+
+Force it with `PLANNER=rules` to see the contrast on the same request.
+
+### It plans against the live swarm
+
+```
+[orchestrator] asking the Claude Code CLI to plan over 14 live capabilities
+plan:    research -> summarize -> translate (3723ms)
+
+# translator killed, health check elapsed:
+[orchestrator] asking the Claude Code CLI to plan over 10 live capabilities
+plan:    research -> condense (4848ms)
+
+# translator restarted:
+[orchestrator] asking the Claude Code CLI to plan over 14 live capabilities
+plan:    research -> summarize -> translate (4170ms)
+```
+
+Same question every time. The capability count tracks the registry, and the plan follows it.
+
+### The part worth copying
+
+The planner does not choose from a hardcoded list. It asks the registry what is online, then **builds the response schema's `enum` from that live list**:
+
+```ts
+const catalog = await capabilityCatalog();   // from GET /agents
+const tags = [...catalog.keys()].sort();
+
+output_config: {
+  format: { type: "json_schema", schema: { /* ... */
+    capability: { type: "string", enum: tags },   // ← the live swarm
+  }},
+}
+```
+
+Structured outputs constrain the response to that schema, so **a step no running agent can serve is not representable**. That closes the standard LLM-planner failure — confidently planning a call to an agent that does not exist — without a validation pass or a retry loop.
+
+Start the translator and the planner gains `translate` on the next request. Kill it and the option disappears. Nothing is redeployed and no prompt is edited: the capability list *is* the registry.
+
+### The rest stays deterministic
+
+| Place | File | Status |
 |---|---|---|
-| **Planning** | `plan()` in [orchestrator.ts](../ts/agents/orchestrator.ts) | Given the request and the skills the registry lists, decide which capabilities to use and in what order |
-| **Routing** | `routeSkill()` in [server.ts](../ts/a2a/server.ts) | Decide which of this agent's own skills an incoming message wants |
-| **The work** | each agent's handler | Actually research, summarise, translate |
-| **Matching** | `search()` in [registry/server.ts](../ts/registry/server.ts) | Semantic capability matching instead of tag equality |
+| **Planning** | [planner.ts](../ts/agents/planner.ts) | **Claude**, with a rule-based fallback |
+| **Routing** | `routeSkill()` in [server.ts](../ts/a2a/server.ts) | tag-overlap scoring |
+| **The work** | each agent's handler | rule-based |
+| **Matching** | `search()` in [registry/server.ts](../ts/registry/server.ts) | exact / substring |
 
-Start with planning. It is where a rule-based system is most obviously inadequate and where a model most obviously earns its cost: `plan()` currently matches substrings like `"french"`, which fails the moment someone writes "put it in the language they speak in Paris".
+Keep those three deterministic for as long as you can. Every model call is latency, cost and nondeterminism, and in a swarm they compound at every hop.
 
-Keep the other three deterministic for as long as you can. Every model call is latency, cost and nondeterminism, and in a swarm those compound at every hop.
+### Operational notes
+
+- **Failure is never fatal.** Any planner error — no key, network down, a refusal — is caught and falls back to rules. A degraded plan beats no answer.
+- **Refusals are HTTP 200.** The planner checks `stop_reason === "refusal"` before parsing, because a refused response will not match the schema.
+- **One call per request,** at the start. The specialists do not call a model at all.
 
 Next: [5. Going public](05-going-public.md)

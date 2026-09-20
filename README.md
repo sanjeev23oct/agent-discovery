@@ -10,7 +10,7 @@ Five agents, in **two languages**, coordinating over the wire. Nothing is hardco
 
 **Zero dependencies.** No `npm install`, no `pip install`, no API keys, no network access. Node ≥ 22.6 (for native TypeScript) and Python 3 are all you need.
 
-![The prod-support dashboard: five live agent cards, one expanded to show its raw JSON, and the registry\'s tag index](docs/images/dashboard-cards.png)
+![The prod-support dashboard: five live agent cards, one expanded to show its raw JSON, and the registry's tag index](docs/images/dashboard-cards.png)
 
 ## Start here: a prod-support scenario
 

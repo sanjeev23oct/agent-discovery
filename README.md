@@ -91,6 +91,10 @@ Scanning is polite by construction: candidates come from a published directory, 
 
 > **Discovered cards are untrusted input.** 3% of live public cards contain instruction-shaped text aimed at a calling model, one of them 25,284 characters long. Render them escaped; never concatenate them into a prompt. [docs/03](docs/03-discovery.md#what-real-cards-actually-look-like)
 
+## Where to find public agents
+
+Verified live: [a2a-protocol.org](https://a2a-protocol.org) (official spec, Linux Foundation), [github.com/a2aproject/A2A](https://github.com/a2aproject/A2A) (official repo/SDKs), [a2aregistry.org](https://a2aregistry.org) (**416 agents, JSON API at `/api/agents`**), [a2a-registry.org](https://www.a2a-registry.org), [agenstry.com](https://agenstry.com), [a2aagentlist.com](https://a2aagentlist.com), and [agentcard.net](https://www.agentcard.net/well-known-agent-json) to validate your own card. Details and caveats in [docs/03](docs/03-discovery.md#where-to-find-public-agents).
+
 ## Call a real public agent
 
 ```bash

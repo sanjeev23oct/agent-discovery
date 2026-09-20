@@ -22,6 +22,8 @@ import { REGISTRY_URL } from "../a2a/registry-client.ts";
 import type { AgentCard } from "../a2a/types.ts";
 
 const DIRECTORY_URL = process.env.DIRECTORY_URL ?? "https://a2aregistry.org/";
+/** Paginated JSON index. Preferred over scraping the directory's HTML. */
+const DIRECTORY_API = process.env.DIRECTORY_API ?? "https://a2aregistry.org/api/agents";
 const CONCURRENCY = Number(process.env.SCAN_CONCURRENCY ?? 12);
 const TIMEOUT_MS = Number(process.env.SCAN_TIMEOUT_MS ?? 6000);
 
@@ -32,9 +34,45 @@ const seedFile = args.find((a) => !a.startsWith("--") && a !== String(LIMIT));
 
 const log = (...a: unknown[]) => console.log("[scan]", ...a);
 
-/** Pull candidate card URLs out of a public directory page. */
-async function candidatesFromDirectory(): Promise<string[]> {
-  log(`fetching candidate list from ${DIRECTORY_URL}`);
+/**
+ * Candidate card URLs from a public directory.
+ *
+ * Prefer the directory's JSON API: it paginates, and it carries health and
+ * conformance metadata the HTML does not. Fall back to scraping the page only
+ * if the API is unavailable, since a directory's markup can change any day.
+ */
+async function candidatesFromApi(): Promise<string[] | null> {
+  try {
+    const urls: string[] = [];
+    let offset = 0;
+    for (let page = 0; page < 50; page++) {
+      const res = await fetch(`${DIRECTORY_API}?limit=100&offset=${offset}`, {
+        signal: AbortSignal.timeout(20000),
+        headers: { accept: "application/json", "user-agent": "agent-discovery-scanner/1.0" },
+      });
+      if (!res.ok) return null;
+      const body: any = await res.json();
+      const agents: any[] = body.agents ?? body.results ?? [];
+      if (agents.length === 0) break;
+      for (const a of agents) {
+        // wellKnownURI is the card; `url` is the RPC endpoint. Prefer the card.
+        const card = a.wellKnownURI ?? a.cardUrl ?? (a.url ? new URL("/.well-known/agent-card.json", a.url).toString() : null);
+        if (card) urls.push(card);
+      }
+      offset += agents.length;
+      if (body.total && urls.length >= body.total) break;
+    }
+    log(`directory API returned ${urls.length} candidate(s)`);
+    return [...new Set(urls)];
+  } catch (err) {
+    log(`directory API unavailable (${err instanceof Error ? err.message : err}) -- falling back to HTML`);
+    return null;
+  }
+}
+
+/** Last resort: pull card URLs out of the directory's rendered page. */
+async function candidatesFromHtml(): Promise<string[]> {
+  log(`scraping candidate list from ${DIRECTORY_URL}`);
   const res = await fetch(DIRECTORY_URL, { signal: AbortSignal.timeout(30000) });
   const html = await res.text();
   const found = html.match(/https?:\/\/[^"&\\\s]+\/\.well-known\/agent(-card)?\.json/g) ?? [];
@@ -47,7 +85,7 @@ async function candidates(): Promise<string[]> {
     const text = await fs.readFile(seedFile, "utf8");
     return text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
   }
-  return candidatesFromDirectory();
+  return (await candidatesFromApi()) ?? candidatesFromHtml();
 }
 
 type Probe =

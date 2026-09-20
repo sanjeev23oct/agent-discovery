@@ -131,6 +131,34 @@ Three things the live ecosystem taught this codebase, each of which changed the 
 
 That third one is the important one. If you feed discovered cards to an LLM planner, **you have handed strangers a slot in your prompt.** Treat every field of a remote card as untrusted data: render it escaped, truncate it, and never concatenate it into a system prompt. See [5. Going public](05-going-public.md#step-3--treat-other-agents-as-untrusted-input).
 
+## Where to find public agents
+
+Verified live, September 2026. The first two are the sources of truth; the rest are third-party directories of varying usefulness.
+
+| Site | What it is | Machine-readable? |
+|---|---|---|
+| [a2a-protocol.org](https://a2a-protocol.org) | The official spec, under the Linux Foundation. Start here for the protocol itself, not for agents. | spec only |
+| [github.com/a2aproject/A2A](https://github.com/a2aproject/A2A) | The official project repo and SDKs (★25.8k). | schemas, SDKs |
+| [a2aregistry.org](https://a2aregistry.org) | The largest working directory: **416 agents, 393 reporting healthy**. | **yes** — `GET /api/agents?limit=100&offset=0`, paginated, with `is_healthy`, `conformance`, `uptime_percentage`, `avg_response_time_ms` |
+| [a2a-registry.org](https://www.a2a-registry.org) | A separate curated registry; also defines an `agents.json` multi-agent card format. | no public JSON API found |
+| [agenstry.com](https://agenstry.com) | Independent directory that tracks A2A and MCP agents. | no public JSON API found |
+| [a2aagentlist.com](https://a2aagentlist.com) | Browsable list, lighter metadata. | no public JSON API found |
+| [agentcard.net](https://www.agentcard.net/well-known-agent-json) | Card validator — paste a domain, check your own card is served correctly. | validator |
+
+**Note the two similar names.** `a2aregistry.org` and `a2a-registry.org` are different sites run by different people. Only the first exposed a usable JSON API when tested.
+
+This repo's scanner uses that API, with HTML scraping as a fallback:
+
+```bash
+node ts/registry/scan.ts              # pulls all 416 from the JSON API
+node ts/registry/scan.ts --limit 60   # smaller sample
+DIRECTORY_API=https://your-registry/api/agents node ts/registry/scan.ts
+```
+
+### Read the directory's metadata sceptically
+
+The registry API exposes a `pricing` field. All 416 agents leave it `unspecified`, so you cannot tell what a call will cost until you make one — and a good number answer with `input-required` and an x402 payment demand. `is_healthy` means the card is fetchable, not that the agent does anything useful: 393 were "healthy" and none of the eleven news agents returned a headline. See [6. Does this pay off?](06-does-this-pay-off.md).
+
 ## Consuming a public agent
 
 Discovery is only half of it. `ts/demos/call-public.ts` calls real public agents with this repo's own client:

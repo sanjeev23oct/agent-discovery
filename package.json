@@ -1,0 +1,19 @@
+{
+  "name": "agent-discovery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent swarms, the A2A protocol, and agent discovery -- a runnable, dependency-free demo in TypeScript and Python.",
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "up": "./scripts/swarm-up.sh",
+    "down": "./scripts/swarm-down.sh",
+    "registry": "node ts/registry/server.ts",
+    "agent:researcher": "node ts/agents/researcher.ts",
+    "agent:orchestrator": "node ts/agents/orchestrator.ts",
+    "agent:notifier": "node ts/agents/notifier.ts",
+    "demo:discovery": "node ts/demos/discovery.ts",
+    "demo:orchestrator": "node ts/demos/orchestrator.ts",
+    "demo:handoff": "node ts/demos/handoff.ts"
+  }
+}

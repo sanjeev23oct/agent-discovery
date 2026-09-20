@@ -1,0 +1,124 @@
+# agent-discovery
+
+A runnable demonstration of three ideas that are usually explained separately:
+
+1. **Agent swarms** — many narrow agents cooperating instead of one agent with many tools.
+2. **A2A** — the Agent2Agent protocol, so agents can talk to agents across process, host, vendor and language boundaries.
+3. **Discovery** — how your agent finds others, and how others find yours.
+
+Five agents, in **two languages**, coordinating over the wire. Nothing is hardcoded about who exists: agents publish a card, a registry indexes it, and peers are resolved at runtime.
+
+**Zero dependencies.** No `npm install`, no `pip install`, no API keys, no network access. Node ≥ 22.6 (for native TypeScript) and Python 3 are all you need.
+
+## Quick start
+
+```bash
+./scripts/swarm-up.sh        # registry + 5 agents
+./scripts/demo-discovery.sh  # how agents find each other
+./scripts/demo-orchestrator.sh
+./scripts/demo-handoff.sh
+./scripts/swarm-down.sh
+```
+
+Watch the agents think while a demo runs:
+
+```bash
+tail -f .swarm/logs/*.log
+```
+
+## The swarm
+
+| Agent | Lang | Port | Skill | Tags (what it is discovered by) |
+|---|---|---|---|---|
+| `registry` | TS | 4000 | — | the yellow pages, not an agent |
+| `researcher` | TS | 4101 | `research.gather` | research, gather, facts |
+| `orchestrator` | TS | 4102 | `swarm.solve` | orchestrate, solve, plan, delegate |
+| `notifier` | TS | 4103 | `notify.publish` | notify, publish, deliver |
+| `summarizer` | **Py** | 4201 | `text.summarize` | summarize, condense, shorten |
+| `translator` | **Py** | 4202 | `text.translate` | translate, french, language |
+
+The TypeScript and Python agents share no library, no types and no codegen. They interoperate because they agree on the JSON on the wire — which is the entire argument for having a protocol.
+
+## The two swarm patterns
+
+**Orchestrator + specialists** (`demo-orchestrator.sh`) — one agent holds the plan, discovers specialists by capability, delegates, and merges. Legible and debuggable; the orchestrator is a bottleneck and a single point of failure.
+
+```
+request → orchestrator ─┬→ researcher (TS)
+                        ├→ summarizer (Py)
+                        ├→ translator (Py)
+                        └→ notifier   (TS)     one contextId throughout
+```
+
+**Peer-to-peer handoff** (`demo-handoff.sh`) — no coordinator. The message carries a `route` of *capabilities, not addresses*. Each agent finishes its step, asks the registry who does the next one, and forwards.
+
+```
+researcher → summarizer → translator → notifier
+   (TS)         (Py)          (Py)        (TS)
+```
+
+Each hop is resolved at the moment it is needed, so the swarm adapts to what is actually running. Kill the translator, wait ~10s for the registry health check, and re-run: the chain skips the missing capability and still delivers a briefing.
+
+```
+researcher → summarizer → notifier
+```
+
+That is the practical difference between the two patterns. Losing a specialist costs you that specialist's contribution, not the whole job.
+
+## Exposing your agent, and finding others
+
+Discovery works at two levels, covered in [docs/03-discovery.md](docs/03-discovery.md):
+
+- **Agent Card** — every agent serves its own capability document at `/.well-known/agent-card.json`. If someone knows your host, they need nothing else. Try it: `curl localhost:4101/.well-known/agent-card.json`.
+- **Registry** — agents `POST /register` their card URL; anyone can then ask `GET /agents?tag=translate`. This is what lets you find agents you did not already know about.
+
+To make your agent discoverable beyond your laptop, see [docs/05-going-public.md](docs/05-going-public.md).
+
+## Docs
+
+| | |
+|---|---|
+| [01-agent-swarms.md](docs/01-agent-swarms.md) | What a swarm is, when it beats one big agent, and when it does not |
+| [02-a2a-protocol.md](docs/02-a2a-protocol.md) | The wire format, annotated — cards, tasks, messages, JSON-RPC |
+| [03-discovery.md](docs/03-discovery.md) | Well-known URIs, registries, and capability matching |
+| [04-swarm-patterns.md](docs/04-swarm-patterns.md) | Orchestrator vs. handoff vs. fan-out vs. blackboard |
+| [05-going-public.md](docs/05-going-public.md) | Exposing your agent safely to the outside world |
+
+## Reading the code
+
+Start with [ts/a2a/types.ts](ts/a2a/types.ts) — the whole protocol surface in one file, with the spec's field names. Then:
+
+```
+ts/a2a/server.ts        serve a card, dispatch JSON-RPC, run tasks
+ts/a2a/client.ts        fetch a card, call another agent
+ts/a2a/handoff.ts       decentralised next-hop routing
+ts/registry/server.ts   the registry (~180 lines)
+py/a2a/                 the same thing in Python, stdlib only
+```
+
+Each implementation is deliberately small enough to read in one sitting. For production, use the official SDKs (`@a2a-js/sdk`, `a2a-sdk` for Python) — see [docs/02-a2a-protocol.md](docs/02-a2a-protocol.md#using-the-official-sdks).
+
+## A note on protocol versions
+
+A2A v0.3.x and v1.0 disagree on two things this code has to care about:
+
+| | v0.3.x | v1.0 |
+|---|---|---|
+| Card path | `/.well-known/agent-card.json` | `/.well-known/a2a-agent-card` |
+| Send a message | `"message/send"` | `"SendMessage"` |
+
+These agents **serve both paths and accept both method spellings**, so they interoperate either way. The cards advertise `protocolVersion: "0.3.0"`, since that is the shape of the payloads. Verify it yourself:
+
+```bash
+curl localhost:4201/.well-known/a2a-agent-card   # Python agent, v1.0 path
+curl -X POST localhost:4201 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":
+      {"kind":"message","role":"user","messageId":"m1",
+       "parts":[{"kind":"text","text":"summarise this please"}]}}}'
+```
+
+## What is deliberately not here
+
+The agents' actual *thinking* is rule-based — a note lookup, a longest-lines summariser, a toy French glossary. That keeps the demo deterministic, offline, and free to run, and it keeps your attention on the coordination rather than on model output. Every place an LLM belongs is marked in the code and listed in [docs/04-swarm-patterns.md](docs/04-swarm-patterns.md#where-the-llm-goes).
+
+Also out of scope: authentication, push notifications, task persistence, and signed cards. [docs/05-going-public.md](docs/05-going-public.md) explains what you must add before exposing any of this publicly.

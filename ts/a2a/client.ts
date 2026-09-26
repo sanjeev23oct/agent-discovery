@@ -20,6 +20,25 @@ export class A2AError extends Error {
   }
 }
 
+/**
+ * Fill in `url` / `protocolVersion` when a real v1.0 card omits them at the
+ * top level and puts them inside `supportedInterfaces` instead.
+ *
+ * A card like CarGene's (a genuine, currently-live A2A v1.0 agent) has no
+ * top-level `url` at all -- the RPC endpoint lives at
+ * `supportedInterfaces[0].url`, with that interface's own `protocolVersion`
+ * and `protocolBinding` next to it (a card can offer several transports).
+ * Everything else here assumes `card.url` / `card.protocolVersion` exist, so
+ * this is the one place that difference gets absorbed.
+ */
+function normaliseCard(card: AgentCard): AgentCard {
+  if (card.url) return card;
+  const interfaces = (card as any).supportedInterfaces as Array<{ url: string; protocolVersion?: string; protocolBinding?: string }> | undefined;
+  const iface = interfaces?.find((i) => i.protocolBinding === "JSONRPC") ?? interfaces?.[0];
+  if (!iface) return card;
+  return { ...card, url: iface.url, protocolVersion: card.protocolVersion ?? iface.protocolVersion ?? card.protocolVersion };
+}
+
 /** Try each well-known path in turn, so we work against v0.3 and v1.0 agents. */
 export async function fetchAgentCard(baseUrl: string, timeoutMs = 4000): Promise<AgentCard> {
   const errors: string[] = [];
@@ -34,7 +53,7 @@ export async function fetchAgentCard(baseUrl: string, timeoutMs = 4000): Promise
         errors.push(`${cardUrl} -> HTTP ${res.status}`);
         continue;
       }
-      const card = (await res.json()) as AgentCard;
+      const card = normaliseCard((await res.json()) as AgentCard);
       if (!card.name || !card.url) {
         errors.push(`${cardUrl} -> not an agent card`);
         continue;
@@ -67,10 +86,14 @@ export class A2AClient {
     return new A2AClient(await fetchAgentCard(baseUrl));
   }
 
-  private async rpc(method: string, params: Record<string, unknown>, timeoutMs = 30000) {
+  private isV1() {
+    return String(this.card.protocolVersion ?? "").startsWith("1");
+  }
+
+  private async rpc(method: string, params: Record<string, unknown>, timeoutMs = 30000, extraHeaders: Record<string, string> = {}) {
     const res = await fetch(this.card.url, {
       method: "POST",
-      headers: { "content-type": "application/json", "user-agent": USER_AGENT },
+      headers: { "content-type": "application/json", "user-agent": USER_AGENT, ...extraHeaders },
       body: JSON.stringify({ jsonrpc: "2.0", id: newId("req"), method, params }),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -79,8 +102,30 @@ export class A2AClient {
     return body.result;
   }
 
-  /** Send text, get back a completed (or failed) Task. */
-  async send(text: string, opts: SendOptions = {}): Promise<Task> {
+  /**
+   * Send text, get back a completed (or failed) Task -- or, against a real
+   * v1.0 agent, a bare Message wrapped in `{ message: ... }`.
+   *
+   * v1.0's JSON-RPC binding is proto3-JSON: PascalCase methods
+   * ("SendMessage"), role as the enum string "ROLE_USER" rather than "user",
+   * and Part as a proto `oneof` -- so a text part is `{ text: "..." }`, never
+   * `{ kind: "text", text: "..." }`. Some v1.0 servers (CarGene, verified
+   * live) also *require* an `A2A-Version` header and reject a request that
+   * omits it -- stricter than the "generous in what you accept" servers this
+   * repo's own agents implement.
+   */
+  async send(text: string, opts: SendOptions = {}): Promise<Task | Message> {
+    if (this.isV1()) {
+      const message: Record<string, unknown> = {
+        role: "ROLE_USER",
+        messageId: newId("msg"),
+        parts: opts.skill ? [{ data: { ...opts.metadata, skill: opts.skill, query: text } }] : [{ text }],
+        ...(opts.contextId ? { contextId: opts.contextId } : {}),
+      };
+      const version = this.card.protocolVersion!;
+      return (await this.rpc("SendMessage", { message }, opts.timeoutMs, { "A2A-Version": version })) as Task | Message;
+    }
+
     const message: Message = {
       kind: "message",
       role: "user",
@@ -148,8 +193,23 @@ export class A2AClient {
 export function taskOutput(result: Task | Message | null | undefined): string {
   if (!result) return "";
 
+  // A genuine v1.0 SendMessage response wraps its payload -- SendMessageResponse
+  // is itself a proto oneof, so the real content is `{ message: ... }` or
+  // `{ task: ... }`, not `result` directly. Unwrap that first.
+  let r: any = result;
+  if (r.message && typeof r.message === "object") r = r.message;
+  else if (r.task && typeof r.task === "object") r = r.task;
+
   const partText = (p: any): string => {
-    const kind = p?.kind ?? p?.type; // pre-0.3 agents use `type`
+    let kind = p?.kind ?? p?.type; // pre-0.3 agents use `type`
+    if (!kind) {
+      // v1.0's proto3-JSON binding has no discriminator at all -- Part is a
+      // proto `oneof`, so JSON just contains whichever key was chosen
+      // ("text", "data" or "file"). Verified live against CarGene.
+      if ("text" in (p ?? {})) kind = "text";
+      else if ("data" in (p ?? {})) kind = "data";
+      else if ("file" in (p ?? {})) kind = "file";
+    }
     if (kind === "text") return String(p.text ?? "");
     if (kind === "data") return JSON.stringify(p.data ?? p, null, 2);
     if (kind === "file") return `[file: ${p.file?.name ?? p.file?.uri ?? "unnamed"}]`;
@@ -158,9 +218,11 @@ export function taskOutput(result: Task | Message | null | undefined): string {
   const collect = (parts: any[]) => parts.map(partText).filter(Boolean).join("\n");
 
   // A bare Message response.
-  if ((result as any).kind === "message" || (!(result as any).status && Array.isArray((result as any).parts))) {
-    return collect((result as any).parts ?? []);
+  const roleLooksLikeMessage = r.role === "user" || r.role === "agent" || r.role === "ROLE_USER" || r.role === "ROLE_AGENT";
+  if (r.kind === "message" || roleLooksLikeMessage || (!r.status && Array.isArray(r.parts))) {
+    return collect(r.parts ?? []);
   }
+  result = r;
 
   const task = result as Task;
   const fromArtifacts = (task.artifacts ?? []).flatMap((a) => collect(a.parts ?? [])).filter(Boolean).join("\n");

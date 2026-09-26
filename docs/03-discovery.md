@@ -196,6 +196,20 @@ A client written only from the spec talked to four of five strangers' agents. Ge
 
 The pattern is that **the spec describes a happy path and the wire has a long tail.** Anything you write against A2A needs to accept Task *or* Message, text *or* data parts, `kind` *or* `type`, and must identify itself over HTTP. None of that is exotic; all of it is invisible until you call someone else's server.
 
+### A genuine v1.0 agent breaks all four assumptions above again
+
+Every agent in the table above claims a version but actually speaks v0.3-shaped JSON regardless. [CarGene](https://car-gene.com) doesn't -- it's a real, currently-live agent (Japanese car genealogy data) that speaks proto3-JSON A2A v1.0 for real, and calling it correctly needed three more fixes:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Card fetch succeeds, then rejected as "not an agent card" | v1.0 card has no top-level `url` -- the endpoint lives in `supportedInterfaces[].url`, alongside that interface's own `protocolVersion` | Normalise the card: promote the JSON-RPC interface's `url`/`protocolVersion` to the top level before anything else reads them |
+| Every request rejected with JSON-RPC code `-32009`, even a correctly-v0.3-shaped one | This server strictly requires an `A2A-Version` header and treats its absence as an explicit (and refused) "0.3" -- verified directly: identical body, only the header differs, `-32009` either way it's missing | Send `SendMessage` (not `message/send`), role `"ROLE_USER"` (not `"user"`), parts as a bare `{text: ...}` with **no** `kind` key at all -- v1.0's binding is proto3-JSON, where `Part` is a proto `oneof` and the chosen field *is* the discriminator -- and the `A2A-Version` header, only when the card says v1.0 |
+| A successful response still produced empty output | `SendMessageResponse` is itself a oneof: the payload is wrapped as `{"message": {...}}` or `{"task": {...}}`, not `result` directly | Unwrap the envelope before reading parts; parts with neither `kind` nor `type` are read by which of `text`/`data`/`file` is actually present |
+
+One more, found only because a real agent used a path-prefixed base URL: the Python client resolved `/.well-known/...` by string-concatenating it onto the base URL, so `agents.algovoi.co.uk/a2a` produced `.../a2a/.well-known/agent-card.json` -- wrong, since [RFC 8615](https://www.rfc-editor.org/rfc/rfc8615) well-known URIs resolve against the **origin**, dropping any path. The TypeScript client already got this right via `new URL(path, baseUrl)`; Python needed the equivalent origin-only resolution.
+
+Try it: `node ts/demos/call-public.ts https://car-gene.com search_vehicles "AE86"` or `python3 py/demos/call_public.py`.
+
 ## Making your own agent discoverable
 
 Inside this swarm, three lines:

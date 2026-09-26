@@ -21,6 +21,10 @@ const DEFAULTS: Target[] = [
   ["https://a2apark.com/a2a", "list-rides", "List available rides."],
   ["https://agents.algovoi.co.uk/a2a", "verify-rfc9421", "What does this service verify?"],
   ["https://a2a-browser.digiant.nz", "browser/search", "What can you do?"],
+  // A genuine A2A v1.0 agent -- not just claiming the version, actually
+  // speaking it: PascalCase methods, ROLE_USER, no part-kind discriminator,
+  // and a strictly-enforced A2A-Version header. See docs/03-discovery.md.
+  ["https://car-gene.com", "search_vehicles", "AE86"],
 ];
 
 const argv = process.argv.slice(2);
